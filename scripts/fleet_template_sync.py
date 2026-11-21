@@ -319,12 +319,21 @@ permissions:
                         dst_path.write_text(cfg_txt, encoding="utf-8")
 
         # 4. Generate caller workflows (preserving specialized CI if already present)
-        existing_ci = workflows_dir / "ci.yml"
-        has_custom_ci = existing_ci.exists() and TEMPLATE_REPO not in existing_ci.read_text(encoding="utf-8")
+        has_custom_ci = False
+        for candidate in ["ci.yml", "ci-orchestrator.yml", "test.yml", "tests.yml", "build.yml", "pipeline.yml"]:
+            c_path = workflows_dir / candidate
+            if c_path.exists() and TEMPLATE_REPO not in c_path.read_text(encoding="utf-8", errors="ignore"):
+                has_custom_ci = True
+                break
+
         if not has_custom_ci:
             (workflows_dir / "ci.yml").write_text(get_caller_workflow_ci(repo_type), encoding="utf-8")
         else:
             log.info("Preserving repository's specialized CI pipeline in %s", repo_full_name)
+            tmpl_ci = workflows_dir / "ci.yml"
+            if tmpl_ci.exists() and TEMPLATE_REPO in tmpl_ci.read_text(encoding="utf-8", errors="ignore") and (workflows_dir / "ci-orchestrator.yml").exists():
+                log.info("Removing duplicate template ci.yml in favor of pre-existing ci-orchestrator.yml in %s", repo_full_name)
+                tmpl_ci.unlink()
 
         (workflows_dir / "linter.yml").write_text(get_caller_workflow_linter(), encoding="utf-8")
         (workflows_dir / "issue-triage.yml").write_text(get_caller_workflow_issue_triage(), encoding="utf-8")
