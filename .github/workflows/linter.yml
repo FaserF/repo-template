@@ -8,5 +8,5 @@ on:
 
 jobs:
   lint:
-    uses: FaserF/repo-template/.github/workflows/reusable-linter.yml@main
+    uses: ./.github/workflows/reusable-linter.yml
     secrets: inherit
