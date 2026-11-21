@@ -15,11 +15,15 @@ on:
         description: "Maximum agent loop iterations"
         type: number
         default: 25
+      runner:
+        description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
+        type: string
+        default: "auto"
 
 jobs:
   resolve-issue:
     name: OpenHands Autonomous Issue Solver
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || secrets.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       contents: write
       pull-requests: write

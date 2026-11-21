@@ -11,11 +11,15 @@ on:
         description: "Python version for test runners"
         type: string
         default: "3.13"
+      runner:
+        description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
+        type: string
+        default: "auto"
 
 jobs:
   validate:
     name: Validate & Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || secrets.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4

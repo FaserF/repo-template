@@ -11,11 +11,15 @@ on:
         description: "OmniRoute Model (auto/coding or auto/smart)"
         type: string
         default: "auto/coding"
+      runner:
+        description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
+        type: string
+        default: "auto"
 
 jobs:
   interactive-bot:
     name: Hermes Interactive Bot
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || secrets.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       issues: write
       pull-requests: write

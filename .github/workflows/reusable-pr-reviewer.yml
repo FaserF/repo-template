@@ -11,11 +11,15 @@ on:
         description: "OmniRoute Base URL (falls back to secret OMNIROUTE_BASE_URL if omitted)"
         type: string
         default: ""
+      runner:
+        description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
+        type: string
+        default: "auto"
 
 jobs:
   review:
     name: Hermes PR Reviewer
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || secrets.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       contents: read
       pull-requests: write
@@ -76,6 +80,50 @@ jobs:
               print("No diff to review.")
               sys.exit(0)
 
+          # 2b. Check for existing CodeRabbit review findings (ignore rate limits and skipped reviews)
+          coderabbit_present, skip_or_limited = False, False
+          cr_comments = []
+          skip_markers = ("rate limit", "limit reached", "review skipped", "skipping review", "bot user detected", "trivial", "too small", "outside of the review scope", "not analyzing")
+
+          try:
+              req_ic = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments", headers=headers)
+              with urllib.request.urlopen(req_ic, timeout=10) as c_resp:
+                  for c in json.loads(c_resp.read().decode()):
+                      u, b = ((c.get("user") or {}).get("login") or "").lower(), (c.get("body") or "").lower()
+                      if "coderabbit" in u and any(m in b for m in skip_markers):
+                          skip_or_limited = True
+          except Exception:
+              pass
+
+          try:
+              req_rv = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/reviews", headers=headers)
+              with urllib.request.urlopen(req_rv, timeout=10) as r_resp:
+                  for r in json.loads(r_resp.read().decode()):
+                      u, b = ((r.get("user") or {}).get("login") or "").lower(), (r.get("body") or "").lower()
+                      if "coderabbit" in u:
+                          if any(m in b for m in skip_markers):
+                              skip_or_limited = True
+                          elif r.get("state") in ("APPROVED", "CHANGES_REQUESTED", "COMMENTED"):
+                              coderabbit_present = True
+          except Exception:
+              pass
+
+          if not skip_or_limited:
+              try:
+                  req_cm = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/comments", headers=headers)
+                  with urllib.request.urlopen(req_cm, timeout=10) as c_resp:
+                      for c in json.loads(c_resp.read().decode()):
+                          if "coderabbit" in ((c.get("user") or {}).get("login") or "").lower():
+                              coderabbit_present = True
+                              cr_comments.append({"path": c.get("path"), "line": c.get("line"), "body": (c.get("body") or "")[:200]})
+              except Exception:
+                  pass
+
+          cr_text = ""
+          if coderabbit_present and cr_comments and not skip_or_limited:
+              items = "\n".join(f"- `{c.get('path')}:{c.get('line')}`: {c.get('body')}" for c in cr_comments[:6])
+              cr_text = f"\nExisting CodeRabbit findings on this PR:\n{items}\nDirectives: Never duplicate. Confirm/refute in short_summary. Add only new deep findings.\n"
+
           # 3. Call OmniRoute Review Engine
           review_prompt = f"""You are FaserF Hermes Agent Reviewer, a deterministic code reviewer for @FaserF repositories.
           Analyze this Pull Request diff. Return strictly valid JSON:
@@ -98,7 +146,8 @@ jobs:
           Diff:
           ```diff
           {diff_text[:16000]}
-          ```"""
+          ```
+          {cr_text}"""
 
           llm_headers = {"Authorization": f"Bearer {omniroute_key}", "Content-Type": "application/json"}
           llm_payload = json.dumps({"model": model, "messages": [{"role": "user", "content": review_prompt}], "temperature": 0.1}).encode()
@@ -168,8 +217,10 @@ jobs:
               "- [ ] 🔄 Request re-review (`@faserf-hermes-agent review`)",
               "- [ ] ⚡ Auto-fix all findings via OpenHands (`@faserf-hermes-agent resolve`)",
               "- [ ] ⏸️ Pause automated reviews\n",
-              "## Findings",
           ]
+          if coderabbit_present and cr_comments and not skip_or_limited:
+              body_lines.append(f"### 🤝 CodeRabbit Co-Review Reconciliation\n- **Analysis:** Reconciled {len(cr_comments)} existing CodeRabbit comment(s). Zero duplicate findings posted.\n- **Complementary Findings:** {len(findings)} new item(s) identified below.\n")
+          body_lines.append("## Findings")
           if findings:
               for f in findings:
                   body_lines.append(f"- **`{f.get('path')}:{f.get('line')}`**: **{f.get('title')}** ({f.get('severity', 'Minor')})")

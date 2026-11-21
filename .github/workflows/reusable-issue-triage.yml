@@ -7,11 +7,15 @@ on:
         description: "Whether to auto-tag ready issues for OpenHands resolution"
         type: boolean
         default: true
+      runner:
+        description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
+        type: string
+        default: "auto"
 
 jobs:
   triage:
     name: Issue Triage & Checklist
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || secrets.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       issues: write
       contents: read
