@@ -60,16 +60,21 @@ jobs:
           python-version: ${{ inputs.python_version }}
           cache: "pip"
 
-      - name: Install Python Dependencies
+      - name: Install Python Dependencies (uv-accelerated)
         if: steps.detect.outputs.type == 'ha-integration' || steps.detect.outputs.type == 'python'
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements_test.txt ]; then
-            pip install -r requirements_test.txt
-          elif [ -f requirements.txt ]; then
-            pip install -r requirements.txt
+          python -m pip install uv || true
+          if command -v uv >/dev/null 2>&1; then
+            INSTALLER="uv pip install --system"
+          else
+            INSTALLER="python -m pip install"
           fi
-          pip install pytest pytest-asyncio pytest-homeassistant-custom-component ruff || true
+          if [ -f requirements_test.txt ]; then
+            $INSTALLER -r requirements_test.txt
+          elif [ -f requirements.txt ]; then
+            $INSTALLER -r requirements.txt
+          fi
+          $INSTALLER pytest pytest-asyncio pytest-homeassistant-custom-component ruff || true
 
       - name: Run Pytest Test Suite
         if: (steps.detect.outputs.type == 'ha-integration' || steps.detect.outputs.type == 'python') && hashFiles('tests/**') != ''
