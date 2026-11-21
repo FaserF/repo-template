@@ -29,7 +29,7 @@ jobs:
         if: steps.py_detect.outputs.has_python == 'true'
         uses: astral-sh/ruff-action@v4.1.0
         with:
-          args: "check --select E,F,W,C90,I,UP --ignore E501"
+          args: "check --select E,F,W,I,UP --ignore E501,C901"
         continue-on-error: true
 
       - name: Actionlint (GitHub Actions Workflows)

@@ -232,16 +232,16 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
             log.error("Failed to clone %s: %s", repo_full_name, err)
             return False
 
-        # Skip only if ci.yml already correctly references the central template repo
+        # Skip only if ci.yml already correctly references the central template repo at current version
         ci_yml = clone_path / ".github" / "workflows" / "ci.yml"
         hermes_yml = clone_path / ".github" / "hermes-repo.yml"
         already_synced = (
             hermes_yml.exists()
             and ci_yml.exists()
-            and TEMPLATE_REPO in ci_yml.read_text(encoding="utf-8")
+            and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}" in ci_yml.read_text(encoding="utf-8", errors="ignore")
         )
         if already_synced:
-            log.info("Repository %s already has correct template baseline. Skipping.", repo_full_name)
+            log.info("Repository %s already has correct template baseline at %s. Skipping.", repo_full_name, TEMPLATE_VERSION)
             return True
 
         # Determine repo type
@@ -371,6 +371,9 @@ permissions:
         run_cmd(["git", "commit", "-m", commit_msg], cwd=clone_path)
 
         # Push branch
+        gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        if gh_token:
+            run_cmd(["git", "remote", "set-url", "origin", f"https://x-access-token:{gh_token}@github.com/{repo_full_name}.git"], cwd=clone_path)
         code, _, push_err = run_cmd(["git", "push", "-u", "origin", branch_name, "--force"], cwd=clone_path)
         if code != 0:
             log.error("Failed to push branch to %s: %s", repo_full_name, push_err)
