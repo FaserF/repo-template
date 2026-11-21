@@ -41,7 +41,7 @@ jobs:
       - name: Prepare Review Engine Script
         run: |
           cat << 'EOF' > run_pr_review.py
-          import json, os, re, sys, urllib.request, urllib.error
+          import json, os, re, sys, time, urllib.request, urllib.error
 
           pr_num = int(os.environ.get("PR_NUMBER", "0"))
           repo = os.environ.get("GITHUB_REPOSITORY", "")
@@ -56,6 +56,28 @@ jobs:
 
           headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json", "User-Agent": "FaserF-Hermes-Reviewer"}
           owner, name = repo.split("/")
+          start_time = time.time()
+          marker = "<!-- hermes-ai-reviewer-status -->"
+          status_cid = None
+
+          # 0. Set or edit in-place status comment
+          try:
+              req_sc = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments", headers=headers)
+              with urllib.request.urlopen(req_sc, timeout=10) as sc_resp:
+                  for sc in json.loads(sc_resp.read().decode()):
+                      if marker in (sc.get("body") or ""):
+                          status_cid = sc.get("id")
+                          break
+              in_prog_body = f"{marker}\n> 🔄 **FaserF Hermes Agent Reviewer:** Analysis in progress... (`0s` elapsed)  \n> **Engine:** OmniRoute (`{model}`) · Validating PR diff & fleet standards..."
+              if status_cid:
+                  req_p = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/comments/{status_cid}", headers=headers, data=json.dumps({"body": in_prog_body}).encode(), method="PATCH")
+                  urllib.request.urlopen(req_p, timeout=10)
+              else:
+                  req_p = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments", headers=headers, data=json.dumps({"body": in_prog_body}).encode())
+                  with urllib.request.urlopen(req_p, timeout=10) as p_res:
+                      status_cid = json.loads(p_res.read().decode()).get("id")
+          except Exception as exc:
+              print(f"Status start note: {exc}")
 
           # 1. Fetch PR details
           req = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}", headers=headers)
@@ -80,7 +102,7 @@ jobs:
           # 2b. Check for existing CodeRabbit review findings (ignore rate limits and skipped reviews)
           coderabbit_present, skip_or_limited = False, False
           cr_comments = []
-          skip_markers = ("rate limit", "limit reached", "review skipped", "skipping review", "bot user detected", "trivial", "too small", "outside of the review scope", "not analyzing")
+          skip_markers = ("rate limit", "limit reached", "review skipped", "skipping review", "bot user detected", "trivial", "too small", "outside of the review scope", "not analyzing", "fewer than 10 stars", "10 stars")
 
           try:
               req_ic = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments", headers=headers)
@@ -280,6 +302,16 @@ jobs:
               print(f"Batch review fallback: {he.code}")
               fallback = {"commit_id": commit_sha, "body": top_body, "event": event}
               urllib.request.urlopen(urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/reviews", headers=headers, data=json.dumps(fallback).encode()))
+
+          # 8. Update in-place status comment to finished
+          elapsed = int(time.time() - start_time)
+          done_body = f"{marker}\n> ✅ **FaserF Hermes Agent Reviewer:** Review completed in `{elapsed}s`.  \n> **Verdict:** `{event}` ({len(findings)} findings, {len(inline_comments)} inline suggestions) · Co-Review: {'CodeRabbit Reconciled' if cr_comments else 'Independent Analysis'}"
+          try:
+              if status_cid:
+                  req_done = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/comments/{status_cid}", headers=headers, data=json.dumps({"body": done_body}).encode(), method="PATCH")
+                  urllib.request.urlopen(req_done, timeout=10)
+          except Exception as exc:
+              print(f"Status finish note: {exc}")
           EOF
 
       - name: Execute PR Review
