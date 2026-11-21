@@ -1,0 +1,91 @@
+name: Reusable CodeRabbit-Parity Bot
+
+on:
+  workflow_call:
+    inputs:
+      omniroute_base_url:
+        description: "OmniRoute Base URL (default: public https://omniroute.fabiseitz.de/v1)"
+        type: string
+        default: "https://omniroute.fabiseitz.de/v1"
+      model:
+        description: "OmniRoute Model"
+        type: string
+        default: "openai/auto/best-coding"
+
+jobs:
+  interactive-bot:
+    name: Hermes Interactive Bot
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Generate Bot Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
+      - name: Process Interactive Command
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          script: |
+            const comment = context.payload.comment ? context.payload.comment.body.trim() : "";
+            const isPR = Boolean(context.payload.issue && context.payload.issue.pull_request) || Boolean(context.payload.pull_request);
+            const issueNumber = context.payload.issue ? context.payload.issue.number : context.payload.pull_request.number;
+
+            if (!comment.includes("@faserf-hermes-agent") && !comment.startsWith("/")) {
+              return;
+            }
+
+            const isReviewCmd = /@faserf-hermes-agent\s+review|\/review/i.test(comment);
+            const isResolveCmd = /@faserf-hermes-agent\s+resolve|\/resolve/i.test(comment);
+            const isHelpCmd = /@faserf-hermes-agent\s+help|\/help/i.test(comment);
+
+            if (isHelpCmd) {
+              const helpBody = `> [!NOTE]\n` +
+                `> 🤖 **Hermes Fleet Assistant Commands** (CodeRabbit Parity)  \n` +
+                `> Provided by [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)  \n\n` +
+                `Available commands in comments:\n` +
+                `* \`@faserf-hermes-agent review\` — Re-trigger automated line-by-line PR code review.\n` +
+                `* \`@faserf-hermes-agent resolve\` — Trigger autonomous SWE bugfix/feature resolution via OpenHands.\n` +
+                `* \`@faserf-hermes-agent help\` — Display this command reference.\n`;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: helpBody
+              });
+              return;
+            }
+
+            if (isResolveCmd) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: ["openhands:ready"]
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `> 🤖 **OpenHands Dispatch:** Autonomous investigation scheduled for #${issueNumber}. OpenHands agent is spinning up.`
+              });
+              return;
+            }
+
+            if (isReviewCmd && isPR) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `> 🔍 **PR Review Triggered:** Re-evaluating pull request #${issueNumber} with OmniRoute best-coding engine. Review will appear shortly.`
+              });
+            }

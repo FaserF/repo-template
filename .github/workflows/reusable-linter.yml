@@ -1,0 +1,21 @@
+name: Reusable Linter Workflow
+
+on:
+  workflow_call:
+
+jobs:
+  lint:
+    name: Code Quality & Linting
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Ruff Linter & Formatter (Python)
+        uses: astral-sh/ruff-action@v3
+        with:
+          args: "check --select E,F,W,C90,I,UP --ignore E501"
+
+      - name: Actionlint (GitHub Actions Workflows)
+        uses: raven-actions/actionlint@v2
+        continue-on-error: true

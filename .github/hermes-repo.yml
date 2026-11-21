@@ -1,0 +1,29 @@
+# FaserF Fleet Repository Configuration
+# Schema version: 1.0
+
+# Repository Type: ha-integration | ha-addon | go | python | generic
+type: generic
+
+# Profile: full (all workflows, deep testing, OpenHands solver) | minimal (lightweight linter, basic CI)
+profile: full
+
+# Autonomous AI Agent & OpenHands Integration
+openhands:
+  enabled: true
+  auto_triage: true
+  auto_solve_labels:
+    - bug
+    - "openhands:ready"
+  interactive_commands: true
+
+# Automated Code Review (CodeRabbit Parity)
+code_review:
+  enabled: true
+  pr_opened: true
+  inline_comments: true
+
+# Release Automation
+releases:
+  enabled: true
+  semantic: true
+  draft: false

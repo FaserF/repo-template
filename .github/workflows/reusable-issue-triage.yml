@@ -1,0 +1,123 @@
+name: Reusable Issue Triage Workflow
+
+on:
+  workflow_call:
+    inputs:
+      auto_openhands:
+        description: "Whether to auto-tag ready issues for OpenHands resolution"
+        type: boolean
+        default: true
+
+jobs:
+  triage:
+    name: Issue Triage & Checklist
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Generate Bot Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        continue-on-error: true
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
+      - name: Analyze Issue & Post Pre-filled Checklist
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = context.payload.issue;
+            const issueBody = issue.body || "";
+            const issueTitle = issue.title || "";
+            const labels = issue.labels.map(l => l.name);
+
+            // 1. Fetch latest release details
+            let latestRelease = "none";
+            let latestDate = "n/a";
+            try {
+              const rel = await github.rest.repos.getLatestRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo
+              });
+              if (rel.data) {
+                latestRelease = rel.data.tag_name || "v1.0.0";
+                latestDate = (rel.data.published_at || "").split("T")[0] || "n/a";
+              }
+            } catch (e) {
+              // No release found
+            }
+
+            // 2. Extract versions and content from issue body
+            const versionMatch = issueBody.match(/(?:Version|Release)[\s\S]*?(?:###|\n\n)([\w\.\-]+)/i) || issueBody.match(/\b\d+\.\d+\.\d+(?:[a-z0-9\.\-]+)?\b/);
+            const reportedVersion = versionMatch ? versionMatch[1] || versionMatch[0] : "Not explicitly specified";
+
+            const hasLogs = issueBody.includes("```") || /traceback|exception|error|warning|debug/i.test(issueBody);
+            const hasSteps = /steps to reproduce|reproduction/i.test(issueBody) && issueBody.length > 80;
+            const isBeta = /beta|pre-release|rc|dev/i.test(issueBody);
+
+            const isBug = labels.includes("bug") || /bug|crash|fail|broken/i.test(issueTitle);
+            const isFeature = labels.includes("enhancement") || /feature|request|proposal/i.test(issueTitle);
+
+            // 3. Assemble Checklist
+            const checkVer = (reportedVersion !== "Not explicitly specified") ? `[x] **Reported Version:** \`${reportedVersion}\`` : `[ ] **Reported Version:** Missing or unparsed`;
+            const checkLatest = `[x] **Latest Repository Release:** \`${latestRelease}\` (published: ${latestDate})`;
+            const checkLogs = hasLogs ? `[x] **Diagnostic Logs:** Provided in report` : `[ ] **Diagnostic Logs:** Not detected. (Debug logs speed up resolution)`;
+            const checkSteps = hasSteps ? `[x] **Reproduction Steps:** Included` : `[ ] **Reproduction Steps:** Incomplete or missing`;
+            const checkBeta = isBeta ? `[x] **Release Channel:** Pre-release / Beta channel` : `[x] **Release Channel:** Stable channel`;
+
+            let triageBody = `> [!NOTE]\n`;
+            triageBody += `> 🤖 **Automated Issue Triage & Diagnostics**  \n`;
+            triageBody += `> **Agent:** [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent) on behalf of repository maintainer @FaserF  \n`;
+            triageBody += `> *Automated analysis to assist maintainers with triage and reproduction.*  \n\n`;
+
+            triageBody += `Hi @${issue.user.login}, thanks for opening this issue! 👋\n\n`;
+            triageBody += `### Initial Verification Checklist\n`;
+            triageBody += `- ${checkVer}\n`;
+            triageBody += `- ${checkLatest}\n`;
+            triageBody += `- ${checkBeta}\n`;
+            triageBody += `- ${checkLogs}\n`;
+            triageBody += `- ${checkSteps}\n\n`;
+
+            const labelsToAdd = [];
+
+            if (isBug) {
+              if (!hasLogs && !hasSteps) {
+                triageBody += `⚠️ **More Information Needed:**  \n`;
+                triageBody += `To help reproduce and fix this faster, please provide relevant debug logs or step-by-step instructions.\n\n`;
+                labelsToAdd.push("waiting-for-info");
+              } else {
+                triageBody += `✅ **Issue Verified:** Sufficient diagnostics detected. Queued for maintainer review and autonomous resolution.\n\n`;
+                if (${{ inputs.auto_openhands }}) {
+                  labelsToAdd.push("openhands:ready");
+                }
+              }
+            } else if (isFeature) {
+              triageBody += `💡 **Feature Proposal Received:** Thank you for helping shape future releases! Queued for review.\n\n`;
+            }
+
+            triageBody += `---\n`;
+            triageBody += `*Commands available:*\n`;
+            triageBody += `- \`@faserf-hermes-agent resolve\` — Trigger autonomous investigation and bugfix PR via OpenHands.\n`;
+            triageBody += `- \`@faserf-hermes-agent help\` — View bot commands and options.\n\n`;
+            triageBody += `*Please note: @FaserF maintains this project as a hobby in personal free time.*`;
+
+            // Post comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: triageBody
+            });
+
+            // Add labels
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: labelsToAdd
+              });
+            }

@@ -1,0 +1,10 @@
+name: Issue Triage
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  triage:
+    uses: FaserF/repo-template/.github/workflows/reusable-issue-triage.yml@main
+    secrets: inherit

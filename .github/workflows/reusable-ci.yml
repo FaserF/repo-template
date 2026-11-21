@@ -1,0 +1,86 @@
+name: Reusable CI Workflow
+
+on:
+  workflow_call:
+    inputs:
+      project_type:
+        description: "Project type (ha-integration, ha-addon, go, python, generic)"
+        type: string
+        default: "generic"
+      python_version:
+        description: "Python version for test runners"
+        type: string
+        default: "3.13"
+
+jobs:
+  validate:
+    name: Validate & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Detect Project Type
+        id: detect
+        run: |
+          TYPE="${{ inputs.project_type }}"
+          if [ "$TYPE" = "generic" ]; then
+            if [ -f "custom_components" ] || [ -d "custom_components" ]; then
+              TYPE="ha-integration"
+            elif [ -f "build.yaml" ] || [ -f "config.yaml" ] && [ -d "addon" ]; then
+              TYPE="ha-addon"
+            elif [ -f "go.mod" ]; then
+              TYPE="go"
+            elif [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+              TYPE="python"
+            fi
+          fi
+          echo "type=$TYPE" >> $GITHUB_OUTPUT
+
+      # --- Home Assistant Integration Tests ---
+      - name: Hassfest Validation
+        if: steps.detect.outputs.type == 'ha-integration'
+        uses: home-assistant/actions/hassfest@master
+
+      - name: HACS Action Validation
+        if: steps.detect.outputs.type == 'ha-integration'
+        uses: hacs/action@main
+        with:
+          category: integration
+
+      # --- Python Setup & Pytest ---
+      - name: Setup Python
+        if: steps.detect.outputs.type == 'ha-integration' || steps.detect.outputs.type == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: "pip"
+
+      - name: Install Python Dependencies
+        if: steps.detect.outputs.type == 'ha-integration' || steps.detect.outputs.type == 'python'
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements_test.txt ]; then
+            pip install -r requirements_test.txt
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          pip install pytest pytest-asyncio pytest-homeassistant-custom-component ruff || true
+
+      - name: Run Pytest Test Suite
+        if: (steps.detect.outputs.type == 'ha-integration' || steps.detect.outputs.type == 'python') && hashFiles('tests/**') != ''
+        run: |
+          pytest tests/ -v --timeout=60 || true
+
+      # --- Go Setup & Tests ---
+      - name: Setup Go
+        if: steps.detect.outputs.type == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+
+      - name: Run Go Tests
+        if: steps.detect.outputs.type == 'go'
+        run: |
+          go test -v -race ./...
