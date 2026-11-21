@@ -29,6 +29,7 @@ PILOT_REPOS = [
 ]
 
 TEMPLATE_REPO = "FaserF/repo-template"
+TEMPLATE_VERSION = "v1"
 TEMPLATE_LOCAL_DIR = Path(os.environ.get("TEMPLATE_DIR", Path(__file__).resolve().parent.parent if (Path(__file__).resolve().parent.parent / "AGENTS.md").exists() else "c:/Users/fabian/GitHub/repo-template"))
 
 BOT_NAME = "faserf-hermes-agent[bot]"
@@ -88,7 +89,7 @@ permissions:
 
 jobs:
   ci:
-    uses: {TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@main
+    uses: {TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}
     with:
       project_type: "{repo_type}"
     secrets: inherit
@@ -109,7 +110,7 @@ permissions:
 
 jobs:
   lint:
-    uses: {TEMPLATE_REPO}/.github/workflows/reusable-linter.yml@main
+    uses: {TEMPLATE_REPO}/.github/workflows/reusable-linter.yml@{TEMPLATE_VERSION}
 """
 
 
@@ -127,7 +128,7 @@ permissions:
 
 jobs:
   triage:
-    uses: {TEMPLATE_REPO}/.github/workflows/reusable-issue-triage.yml@main
+    uses: {TEMPLATE_REPO}/.github/workflows/reusable-issue-triage.yml@{TEMPLATE_VERSION}
     with:
       auto_openhands: true
 """
@@ -155,7 +156,7 @@ permissions:
 
 jobs:
   bot:
-    uses: {TEMPLATE_REPO}/.github/workflows/reusable-hermes-bot.yml@main
+    uses: {TEMPLATE_REPO}/.github/workflows/reusable-hermes-bot.yml@{TEMPLATE_VERSION}
     secrets: inherit
 """
 
@@ -177,7 +178,7 @@ permissions:
 jobs:
   resolve:
     if: github.event.label.name == 'openhands:ready'
-    uses: {TEMPLATE_REPO}/.github/workflows/reusable-openhands-resolver.yml@main
+    uses: {TEMPLATE_REPO}/.github/workflows/reusable-openhands-resolver.yml@{TEMPLATE_VERSION}
     secrets: inherit
 """
 
@@ -195,7 +196,7 @@ permissions:
 
 jobs:
   release:
-    uses: {TEMPLATE_REPO}/.github/workflows/reusable-release.yml@main
+    uses: {TEMPLATE_REPO}/.github/workflows/reusable-release.yml@{TEMPLATE_VERSION}
     secrets: inherit
 """
 
@@ -214,7 +215,7 @@ permissions:
 
 jobs:
   review:
-    uses: {TEMPLATE_REPO}/.github/workflows/reusable-pr-reviewer.yml@main
+    uses: {TEMPLATE_REPO}/.github/workflows/reusable-pr-reviewer.yml@{TEMPLATE_VERSION}
     secrets: inherit
 """
 

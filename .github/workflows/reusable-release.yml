@@ -45,3 +45,15 @@ jobs:
           name: ${{ inputs.tag_name || github.ref_name }}
           generate_release_notes: true
           draft: ${{ inputs.draft }}
+
+      - name: Update Floating Major Version Tag
+        run: |
+          TAG="${{ inputs.tag_name || github.ref_name }}"
+          if [[ "$TAG" =~ ^v([0-9]+)\. ]]; then
+            MAJOR="v${BASH_REMATCH[1]}"
+            echo "Updating floating major tag $MAJOR -> $TAG"
+            git config user.name "faserf-hermes-agent[bot]"
+            git config user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
+            git tag -fa "$MAJOR" -m "Release $TAG (floating major tag $MAJOR)"
+            git push origin "$MAJOR" --force
+          fi
