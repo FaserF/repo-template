@@ -1,0 +1,70 @@
+name: Fleet Autonomous Template Sync
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"  # Every Monday at 04:00 UTC
+  repository_dispatch:
+    types: [sync_fleet, new_repo]
+  workflow_dispatch:
+    inputs:
+      target_repo:
+        description: "Specific repository to sync (e.g. FaserF/ha-openwrt), or leave blank for all"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run without committing/opening PRs"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: fleet-template-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Fleet Template Harmonizer (faserf-hermes-agent[bot])
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Bot Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          owner: FaserF
+
+      - name: Checkout Template Repository
+        uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+
+      - name: Setup Git Identity as faserf-hermes-agent[bot]
+        run: |
+          git config --global user.name "faserf-hermes-agent[bot]"
+          git config --global user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
+
+      - name: Run Autonomous Fleet Sync
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_REPO: ${{ github.event.inputs.target_repo || github.event.client_payload.repository || '' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || false }}
+        run: |
+          ARGS="--apply"
+          if [ "$DRY_RUN" = "true" ]; then
+            ARGS=""
+          fi
+          if [ -n "$TARGET_REPO" ]; then
+            python scripts/fleet_template_sync.py --repos "$TARGET_REPO" $ARGS
+          else
+            python scripts/fleet_template_sync.py --all $ARGS
+          fi
