@@ -232,14 +232,23 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
             log.error("Failed to clone %s: %s", repo_full_name, err)
             return False
 
-        # Skip only if ci.yml already correctly references the central template repo at current version
+        # Skip only if already correctly synced at current version
         ci_yml = clone_path / ".github" / "workflows" / "ci.yml"
+        ci_orch = clone_path / ".github" / "workflows" / "ci-orchestrator.yml"
         hermes_yml = clone_path / ".github" / "hermes-repo.yml"
-        already_synced = (
-            hermes_yml.exists()
-            and ci_yml.exists()
-            and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}" in ci_yml.read_text(encoding="utf-8", errors="ignore")
-        )
+
+        # If both custom ci-orchestrator and duplicate ci.yml exist, we must clean it up
+        if ci_orch.exists() and ci_yml.exists():
+            already_synced = False
+        else:
+            already_synced = (
+                hermes_yml.exists()
+                and (
+                    ci_orch.exists()
+                    or (ci_yml.exists() and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}" in ci_yml.read_text(encoding="utf-8", errors="ignore"))
+                )
+            )
+
         if already_synced:
             log.info("Repository %s already has correct template baseline at %s. Skipping.", repo_full_name, TEMPLATE_VERSION)
             return True
@@ -299,8 +308,9 @@ permissions:
                 src_path = TEMPLATE_LOCAL_DIR / src_rel
                 dst_path = clone_path / src_rel
                 if src_path.exists():
-                    # Preserve existing custom renovate.json and issue templates
+                    # Preserve existing custom renovate.json, issue templates, and repository-specific AGENTS.md
                     if dst_path.exists() and src_rel in [
+                        "AGENTS.md",
                         ".github/renovate.json",
                         ".github/ISSUE_TEMPLATE/bug_report.yml",
                         ".github/ISSUE_TEMPLATE/feature_request.yml",
@@ -432,11 +442,11 @@ def main() -> None:
     elif args.repos:
         targets = args.repos
     elif args.all:
-        code, out, err = run_cmd(["gh", "repo", "list", "FaserF", "--limit", "100", "--json", "nameWithOwner,isFork"])
+        code, out, err = run_cmd(["gh", "repo", "list", "FaserF", "--limit", "100", "--json", "nameWithOwner,isFork,isArchived"])
         if code == 0:
             import json
             for r in json.loads(out):
-                if not r.get("isFork") and r.get("nameWithOwner") != TEMPLATE_REPO:
+                if not r.get("isFork") and not r.get("isArchived") and r.get("nameWithOwner") != TEMPLATE_REPO:
                     targets.append(r["nameWithOwner"])
         else:
             log.error("Failed to list repos: %s", err)

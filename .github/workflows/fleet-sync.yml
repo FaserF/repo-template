@@ -59,6 +59,8 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GIT_TERMINAL_PROMPT: "0"
+          GIT_ASKPASS: "echo"
           TARGET_REPO: ${{ github.event.inputs.target_repo || github.event.client_payload.repository || '' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || false }}
         run: |
