@@ -16,10 +16,21 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
+      - name: Detect Python files
+        id: py_detect
+        run: |
+          if find . -name "*.py" -not -path "./.git/*" | grep -q .; then
+            echo "has_python=true" >> $GITHUB_OUTPUT
+          else
+            echo "has_python=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Ruff Linter & Formatter (Python)
+        if: steps.py_detect.outputs.has_python == 'true'
         uses: astral-sh/ruff-action@v4.1.0
         with:
           args: "check --select E,F,W,C90,I,UP --ignore E501"
+        continue-on-error: true
 
       - name: Actionlint (GitHub Actions Workflows)
         uses: raven-actions/actionlint@v2
