@@ -23,7 +23,7 @@ on:
 jobs:
   resolve-issue:
     name: OpenHands Autonomous Issue Solver
-    runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || secrets.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
+    runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       contents: write
       pull-requests: write
