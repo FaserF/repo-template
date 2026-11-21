@@ -57,11 +57,12 @@ jobs:
               return;
             }
 
-            // 1. RBAC: Determine caller permissions (configurable via .github/hermes-repo.yml)
+            // 1. Dynamic RBAC: Determine caller permissions strictly per repository via .github/hermes-repo.yml and GitHub API
             const sender = (payload.sender ? payload.sender.login : (payload.comment ? payload.comment.user.login : "")).toLowerCase();
             const association = (payload.comment ? payload.comment.author_association : "") || "";
+            const repoOwner = context.repo.owner.toLowerCase();
 
-            let authorizedAdmins = ["faserf", "eidolf"];
+            let configuredAdmins = [];
             let allowCollaborators = true;
             try {
               const res = await github.rest.repos.getContent({
@@ -72,28 +73,45 @@ jobs:
               const rawCfg = Buffer.from(res.data.content, "base64").toString("utf-8");
               const adminMatch = rawCfg.match(/admins:\s*\n((?:\s*-\s*[\w\-]+\s*\n)+)/);
               if (adminMatch) {
-                const parsed = adminMatch[1].split("\n").map(l => l.replace(/[-\s]/g, "").toLowerCase()).filter(Boolean);
-                if (parsed.length > 0) authorizedAdmins = parsed;
+                configuredAdmins = adminMatch[1].split("\n").map(l => l.replace(/[-\s]/g, "").toLowerCase()).filter(Boolean);
               }
               if (/allow_collaborators:\s*false/i.test(rawCfg)) {
                 allowCollaborators = false;
               }
             } catch (e) {
-              // Defaults to ["faserf", "eidolf"]
+              // File not present or unreadable - dynamically relies on repository permissions
             }
 
-            const isAdmin = authorizedAdmins.includes(sender);
+            if (!configuredAdmins.includes(repoOwner)) {
+              configuredAdmins.push(repoOwner);
+            }
+
+            const isExplicitAdmin = configuredAdmins.includes(sender);
             const isCollab = allowCollaborators && ["OWNER", "MEMBER", "COLLABORATOR"].includes(association);
-            const canExecuteCritical = isAdmin || isCollab;
+            let hasWritePerm = false;
+            if (!isExplicitAdmin && !isCollab && allowCollaborators) {
+              try {
+                const permRes = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username: sender
+                });
+                const perm = permRes.data ? permRes.data.permission : "none";
+                hasWritePerm = ["admin", "write"].includes(perm);
+              } catch (e) {}
+            }
+
+            const canExecuteCritical = isExplicitAdmin || isCollab || hasWritePerm;
 
             if (isHelpCmd) {
+              const adminListText = configuredAdmins.length > 0 ? configuredAdmins.map(a => '@' + a).join(', ') : 'repository maintainers';
               const helpBody = `> [!NOTE]\n` +
                 `> 🤖 **FaserF Hermes Agent Bot Commands & Permissions**  \n` +
                 `> Provided by [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)  \n\n` +
                 `**Public Commands (Anyone):**\n` +
                 `* \`@faserf-hermes-agent review\` (or \`[x] 🔄 Request re-review\`) — Trigger re-review of diff.\n` +
                 `* \`@faserf-hermes-agent help\` — Display this command reference.\n\n` +
-                `**Restricted Maintainer Actions (${authorizedAdmins.map(a => '@' + a).join(', ')}):**\n` +
+                `**Restricted Maintainer Actions (${adminListText}):**\n` +
                 `* \`@faserf-hermes-agent resolve\` (or \`[x] ⚡ Auto-fix all findings\`) — Autonomous SWE agent solver (OpenHands).\n` +
                 `* \`[x] ⏸️ Pause automated reviews\` — Pause automated bot evaluations.\n` +
                 `* *Configured per-repository via \`.github/hermes-repo.yml\`.*`;
@@ -109,13 +127,14 @@ jobs:
 
             if (isResolveCmd) {
               if (!canExecuteCritical) {
+                const adminListText = configuredAdmins.length > 0 ? configuredAdmins.map(a => '@' + a).join(', ') : 'repository maintainers';
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issueNumber,
                   body: `> [!WARNING]\n` +
                     `> 🔒 **Permission Denied**  \n` +
-                    `> Automated code resolution (\`@faserf-hermes-agent resolve\` / OpenHands) is restricted to repository maintainers (\`${authorizedAdmins.map(a => '@' + a).join(', ')}\`).  \n` +
+                    `> Automated code resolution (\`@faserf-hermes-agent resolve\` / OpenHands) is restricted to configured maintainers (\`${adminListText}\`).  \n` +
                     `> Non-maintainers may still request reviews (\`@faserf-hermes-agent review\`) or ask maintainers to trigger auto-fixes.`
                 });
                 return;
@@ -139,13 +158,14 @@ jobs:
 
             if (isPauseCmd) {
               if (!canExecuteCritical) {
+                const adminListText = configuredAdmins.length > 0 ? configuredAdmins.map(a => '@' + a).join(', ') : 'repository maintainers';
                 await github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issueNumber,
                   body: `> [!WARNING]\n` +
                     `> 🔒 **Permission Denied**  \n` +
-                    `> Pausing automated reviews is restricted to repository maintainers (\`${authorizedAdmins.map(a => '@' + a).join(', ')}\`).`
+                    `> Pausing automated reviews is restricted to configured maintainers (\`${adminListText}\`).`
                 });
                 return;
               }
