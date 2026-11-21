@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Ruff Linter & Formatter (Python)
-        uses: astral-sh/ruff-action@v3
+        uses: astral-sh/ruff-action@v4.1.0
         with:
           args: "check --select E,F,W,C90,I,UP --ignore E501"
 
