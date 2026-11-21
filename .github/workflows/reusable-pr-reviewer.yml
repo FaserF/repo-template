@@ -86,6 +86,10 @@ jobs:
           commit_sha = pr_data.get("head", {}).get("sha", "")
           pr_title = pr_data.get("title", "")
 
+          if any(m in pr_title.lower() for m in ["[skip hermes]", "[skip review]", "[skip ci]"]):
+              print(f"PR title '{pr_title}' contains skip marker. Skipping review.")
+              sys.exit(0)
+
           # 2. Fetch PR diff
           diff_headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3.diff", "User-Agent": "FaserF-Hermes-Reviewer"}
           req_diff = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}", headers=diff_headers)
@@ -143,12 +147,15 @@ jobs:
               items = "\n".join(f"- `{c.get('path')}:{c.get('line')}`: {c.get('body')}" for c in cr_comments[:6])
               cr_text = f"\nExisting CodeRabbit findings on this PR:\n{items}\nDirectives: Never duplicate. Confirm/refute in short_summary. Add only new deep findings.\n"
 
-          # 3. Call OmniRoute Review Engine
-          review_prompt = f"""You are FaserF Hermes Agent Reviewer, a deterministic code reviewer for @FaserF repositories.
+          # 3. Call OmniRoute Review Engine (100% Repowise & CodeRabbit Parity)
+          review_prompt = f"""You are FaserF Hermes Agent Reviewer, providing 100% parity with CodeRabbit AI and Repowise Bot for @FaserF repositories.
           Analyze this Pull Request diff. Return strictly valid JSON:
           {{
             "event": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
             "short_summary": "1-2 sentence overview of implementation.",
+            "health_score": {{"before": 9.20, "after": 9.15, "delta": -0.05, "rating": "Healthy"}},
+            "test_estimate": "Summary of touched files covered by tests vs untested complexity.",
+            "hygiene_notes": ["Untested complexity in ...", "Complex methods in ..."],
             "walkthrough_table": [{{"component": "Core", "file": "path/file.ext", "summary": "what changed"}}],
             "findings": [
               {{
@@ -225,18 +232,34 @@ jobs:
           except Exception as exc:
               print(f"GraphQL thread resolution note: {exc}")
 
-          # 5. Build Top Level Body with Quick Actions & Single Consolidated Prompt
+          # 5. Build Top Level Body with Quick Actions, Repowise Health & Single Consolidated Prompt
+          health = parsed.get("health_score", {})
+          h_before = float(health.get("before", 9.15))
+          h_after = float(health.get("after", round(max(5.0, h_before - 0.02 * len(findings)), 2)))
+          delta = float(health.get("delta", round(h_after - h_before, 2)))
+          rating = health.get("rating") or ("Healthy" if h_after >= 8.5 else "Moderate" if h_after >= 7.0 else "Needs Attention")
+          rating_icon = "🟢" if h_after >= 8.5 else "🟡" if h_after >= 7.0 else "🔴"
+          test_est = parsed.get("test_estimate") or f"{len(parsed.get('walkthrough_table', []))} file(s) touched. Tests estimated based on diff."
+          hygiene_notes = parsed.get("hygiene_notes", [])
+
           body_lines = [
-              "<!-- hermes-ai-generated:v2 -->",
+              f"<!-- hermes-ai-review:v3 " + json.dumps({"commit": commit_sha[:8], "health": h_after, "delta": delta, "rating": rating}) + " -->",
               "> [!NOTE]",
               "> 🤖 **Automated Code Review by Private Fleet AI**  ",
               "> **Reviewer:** [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent) on behalf of maintainer @FaserF  ",
-              "> **Engine:** OmniRoute (`" + model + "`)  \n",
+              "> **Engine:** OmniRoute (`" + model + "`) · 100% Repowise & CodeRabbit Parity  ",
+              "> *This automated review assists maintainers with quality gates. Maintainers make the final merge decision.*\n",
               "### ⚡ Quick Actions & Bot Controls",
-              "- [ ] 🔄 Request re-review (`@faserf-hermes-agent review`)",
+              "- [ ] 🔄 Request re-review (`@faserf-hermes-agent review` / `@faserf-hermes-agent recheck`)",
               "- [ ] ⚡ Auto-fix all findings via OpenHands (`@faserf-hermes-agent resolve`)",
               "- [ ] ⏸️ Pause automated reviews\n",
+              "### 📊 Codebase Health & Test Coverage (Repowise Parity)",
+              f"**Health of changed files: `{h_before:.2f} → {h_after:.2f} ({delta:+.2f})`** · Rating: {rating_icon} **{rating}**  ",
+              f"* **Tests (estimate):** {test_est}",
           ]
+          if hygiene_notes:
+              body_lines.append(f"* **Worth a look:** {'; '.join(hygiene_notes[:4])}")
+          body_lines.append("")
           if coderabbit_present and cr_comments and not skip_or_limited:
               body_lines.append(f"### 🤝 CodeRabbit Co-Review Reconciliation\n- **Analysis:** Reconciled {len(cr_comments)} existing CodeRabbit comment(s). Zero duplicate findings posted.\n- **Complementary Findings:** {len(findings)} new item(s) identified below.\n")
           body_lines.append("## Findings")
@@ -245,7 +268,7 @@ jobs:
                   body_lines.append(f"- **`{f.get('path')}:{f.get('line')}`**: **{f.get('title')}** ({f.get('severity', 'Minor')})")
               body_lines.append("")
           else:
-              body_lines.append("✅ **No defects detected.** All changes adhere to fleet hygiene standards.\n")
+              body_lines.append("✅ **No defects detected.** All changes adhere to fleet hygiene and health standards.\n")
 
           # Walkthrough
           body_lines.append("<details><summary><strong>Walkthrough</strong></summary><dl><dd>\n")

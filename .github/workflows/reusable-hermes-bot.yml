@@ -48,7 +48,7 @@ jobs:
 
             if (!issueNumber) return;
 
-            const isReviewCmd = /@faserf-hermes-agent\s+review|\/review|\[x\]\s*(?:🔄\s*)?Request re-review/i.test(comment);
+            const isReviewCmd = /@faserf-hermes-agent\s+(?:review|recheck|deep)|\/(?:review|recheck|deep)|\[x\]\s*(?:🔄\s*)?Request re-review/i.test(comment);
             const isResolveCmd = /@faserf-hermes-agent\s+resolve|\/resolve|\[x\]\s*(?:⚡\s*)?Auto-fix|\[x\]\s*(?:🛠️\s*)?Resolve with OpenHands/i.test(comment);
             const isPauseCmd = /\[x\]\s*(?:⏸️\s*)?Pause automated reviews|@faserf-hermes-agent\s+pause/i.test(comment);
             const isHelpCmd = /@faserf-hermes-agent\s+help|\/help/i.test(comment);
@@ -109,7 +109,8 @@ jobs:
                 `> 🤖 **FaserF Hermes Agent Bot Commands & Permissions**  \n` +
                 `> Provided by [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)  \n\n` +
                 `**Public Commands (Anyone):**\n` +
-                `* \`@faserf-hermes-agent review\` (or \`[x] 🔄 Request re-review\`) — Trigger re-review of diff.\n` +
+                `* \`@faserf-hermes-agent review\` (aliases: \`recheck\`, \`deep\`, \`/review\`, \`/recheck\`) — Trigger re-review & Repowise health analysis.\n` +
+                `* PR title \`[skip hermes]\` / \`[skip review]\` — Skip automated review on this PR.\n` +
                 `* \`@faserf-hermes-agent help\` — Display this command reference.\n\n` +
                 `**Restricted Maintainer Actions (${adminListText}):**\n` +
                 `* \`@faserf-hermes-agent resolve\` (or \`[x] ⚡ Auto-fix all findings\`) — Autonomous SWE agent solver (OpenHands).\n` +
