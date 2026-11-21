@@ -6,7 +6,9 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     uses: ./.github/workflows/reusable-linter.yml
-    secrets: inherit

@@ -12,4 +12,3 @@ permissions:
 jobs:
   triage:
     uses: ./.github/workflows/reusable-issue-triage.yml
-    secrets: inherit

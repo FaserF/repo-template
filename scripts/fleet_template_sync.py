@@ -104,10 +104,12 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     uses: {TEMPLATE_REPO}/.github/workflows/reusable-linter.yml@main
-    secrets: inherit
 """
 
 
@@ -128,7 +130,6 @@ jobs:
     uses: {TEMPLATE_REPO}/.github/workflows/reusable-issue-triage.yml@main
     with:
       auto_openhands: true
-    secrets: inherit
 """
 
 
@@ -188,6 +189,9 @@ on:
   push:
     tags:
       - "v*"
+
+permissions:
+  contents: write
 
 jobs:
   release:
@@ -297,8 +301,14 @@ permissions:
                     dst_path.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src_path, dst_path)
 
-        # 4. Generate caller workflows
-        (workflows_dir / "ci.yml").write_text(get_caller_workflow_ci(repo_type), encoding="utf-8")
+        # 4. Generate caller workflows (preserving specialized CI if already present)
+        existing_ci = workflows_dir / "ci.yml"
+        has_custom_ci = existing_ci.exists() and TEMPLATE_REPO not in existing_ci.read_text(encoding="utf-8")
+        if not has_custom_ci:
+            (workflows_dir / "ci.yml").write_text(get_caller_workflow_ci(repo_type), encoding="utf-8")
+        else:
+            log.info("Preserving repository's specialized CI pipeline in %s", repo_full_name)
+
         (workflows_dir / "linter.yml").write_text(get_caller_workflow_linter(), encoding="utf-8")
         (workflows_dir / "issue-triage.yml").write_text(get_caller_workflow_issue_triage(), encoding="utf-8")
         (workflows_dir / "hermes-bot.yml").write_text(get_caller_workflow_bot(), encoding="utf-8")
