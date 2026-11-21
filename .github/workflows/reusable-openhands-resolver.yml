@@ -37,7 +37,7 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       - name: Checkout Target Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
@@ -48,7 +48,7 @@ jobs:
           git config --global user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
 
       - name: Acknowledge Resolution Start
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -64,7 +64,7 @@ jobs:
             });
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.15"
 

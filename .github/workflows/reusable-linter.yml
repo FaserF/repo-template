@@ -14,7 +14,7 @@ jobs:
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Ruff Linter & Formatter (Python)
         uses: astral-sh/ruff-action@v4.1.0
