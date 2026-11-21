@@ -50,10 +50,11 @@ jobs:
 
             const isReviewCmd = /@faserf-hermes-agent\s+(?:review|recheck|deep)|\/(?:review|recheck|deep)|\[x\]\s*(?:🔄\s*)?Request re-review/i.test(comment);
             const isResolveCmd = /@faserf-hermes-agent\s+resolve|\/resolve|\[x\]\s*(?:⚡\s*)?Auto-fix|\[x\]\s*(?:🛠️\s*)?Resolve with OpenHands/i.test(comment);
+            const isDocCmd = /@faserf-hermes-agent\s+(?:doc|docs|document)|\/(?:doc|docs|document)|\[x\]\s*(?:📚\s*)?Update docs/i.test(comment);
             const isPauseCmd = /\[x\]\s*(?:⏸️\s*)?Pause automated reviews|@faserf-hermes-agent\s+pause/i.test(comment);
             const isHelpCmd = /@faserf-hermes-agent\s+help|\/help/i.test(comment);
 
-            if (!isReviewCmd && !isResolveCmd && !isPauseCmd && !isHelpCmd) {
+            if (!isReviewCmd && !isResolveCmd && !isPauseCmd && !isHelpCmd && !isDocCmd) {
               return;
             }
 
@@ -110,6 +111,7 @@ jobs:
                 `> Provided by [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)  \n\n` +
                 `**Public Commands (Anyone):**\n` +
                 `* \`@faserf-hermes-agent review\` (aliases: \`recheck\`, \`deep\`, \`/review\`, \`/recheck\`) — Trigger re-review & Repowise health analysis.\n` +
+                `* \`@faserf-hermes-agent doc\` (aliases: \`docs\`, \`document\`, \`/doc\`) — Sync and update documentation & README (GitDocify parity).\n` +
                 `* PR title \`[skip hermes]\` / \`[skip review]\` — Skip automated review on this PR.\n` +
                 `* \`@faserf-hermes-agent help\` — Display this command reference.\n\n` +
                 `**Restricted Maintainer Actions (${adminListText}):**\n` +
@@ -183,6 +185,23 @@ jobs:
                 repo: context.repo.repo,
                 issue_number: issueNumber,
                 body: `> ⏸️ **Automated Reviews Paused:** Automated reviews on #${issueNumber} paused by @${sender}. Uncheck or run \`@faserf-hermes-agent review\` to resume.`
+              });
+              return;
+            }
+
+            if (isDocCmd) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: ["openhands:ready"]
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `> 📚 **Hermes Documentation Engine (GitDocify Parity):** Documentation generation/sync scheduled for #${issueNumber} by @${sender}. Agent is inspecting codebase and updating README/docs.`
               });
               return;
             }
