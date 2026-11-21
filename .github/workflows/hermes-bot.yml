@@ -8,6 +8,11 @@ on:
   issues:
     types: [edited]
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 jobs:
   bot:
     uses: ./.github/workflows/reusable-hermes-bot.yml
