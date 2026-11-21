@@ -99,9 +99,9 @@ jobs:
             }
 
             triageBody += `---\n`;
-            triageBody += `*Commands available:*\n`;
-            triageBody += `- \`@faserf-hermes-agent resolve\` — Trigger autonomous investigation and bugfix PR via OpenHands.\n`;
-            triageBody += `- \`@faserf-hermes-agent help\` — View bot commands and options.\n\n`;
+            triageBody += `### ⚡ Quick Actions & Interactive Controls\n`;
+            triageBody += `- [ ] 🛠️ Resolve with OpenHands (\`@faserf-hermes-agent resolve\`)\n`;
+            triageBody += `- [ ] 📋 Re-run diagnostic checklist\n\n`;
             triageBody += `*Please note: @FaserF maintains this project as a hobby in personal free time.*`;
 
             // Post comment
