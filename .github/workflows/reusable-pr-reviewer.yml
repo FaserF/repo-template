@@ -103,10 +103,30 @@ jobs:
               print("No diff to review.")
               sys.exit(0)
 
-          # 2b. Check for existing CodeRabbit review findings (ignore rate limits and skipped reviews)
+          # 2b. Check for existing CodeRabbit review findings (Platform API + GitHub comments)
           coderabbit_present, skip_or_limited = False, False
           cr_comments = []
           skip_markers = ("rate limit", "limit reached", "review skipped", "skipping review", "bot user detected", "trivial", "too small", "outside of the review scope", "not analyzing", "fewer than 10 stars", "10 stars")
+          repo_id = str((pr_data.get("base") or {}).get("repo", {}).get("id") or "")
+          cr_api_key = os.environ.get("CODERABBIT_API_KEY", "")
+
+          if cr_api_key and repo_id:
+              try:
+                  req_cr_api = urllib.request.Request(
+                      f"https://api.coderabbit.ai/v1/repositories/{repo_id}/pull-requests/{pr_num}/review/summary",
+                      headers={"x-coderabbitai-api-key": cr_api_key, "User-Agent": "Jarvis-PR-Reviewer"}
+                  )
+                  with urllib.request.urlopen(req_cr_api, timeout=10) as cr_resp:
+                      if cr_resp.status == 200:
+                          cr_json = json.loads(cr_resp.read().decode())
+                          summary_md = (cr_json.get("summary") or {}).get("body_markdown") or ""
+                          if summary_md and not any(m in summary_md.lower() for m in skip_markers):
+                              coderabbit_present = True
+                              cr_comments.append({"path": "Repository", "line": 1, "body": summary_md[:300]})
+                      elif cr_resp.status == 404:
+                          skip_or_limited = True
+              except Exception as exc:
+                  print(f"CodeRabbit Platform API check note: {exc}")
 
           try:
               req_ic = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments", headers=headers)
@@ -343,6 +363,7 @@ jobs:
           BOT_TOKEN: ${{ steps.app-token.outputs.token }}
           OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_OPENHANDS_API_KEY || secrets.OMNIROUTE_API_KEY }}
           OMNIROUTE_BASE_URL: ${{ inputs.omniroute_base_url != '' && inputs.omniroute_base_url || secrets.OMNIROUTE_BASE_URL }}
+          CODERABBIT_API_KEY: ${{ secrets.CODERABBIT_API_KEY }}
           MODEL: ${{ inputs.model }}
         run: |
           python run_pr_review.py || true
