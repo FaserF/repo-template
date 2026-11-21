@@ -50,20 +50,53 @@ jobs:
 
             const isReviewCmd = /@faserf-hermes-agent\s+review|\/review|\[x\]\s*(?:🔄\s*)?Request re-review/i.test(comment);
             const isResolveCmd = /@faserf-hermes-agent\s+resolve|\/resolve|\[x\]\s*(?:⚡\s*)?Auto-fix|\[x\]\s*(?:🛠️\s*)?Resolve with OpenHands/i.test(comment);
+            const isPauseCmd = /\[x\]\s*(?:⏸️\s*)?Pause automated reviews|@faserf-hermes-agent\s+pause/i.test(comment);
             const isHelpCmd = /@faserf-hermes-agent\s+help|\/help/i.test(comment);
 
-            if (!isReviewCmd && !isResolveCmd && !isHelpCmd) {
+            if (!isReviewCmd && !isResolveCmd && !isPauseCmd && !isHelpCmd) {
               return;
             }
 
+            // 1. RBAC: Determine caller permissions (configurable via .github/hermes-repo.yml)
+            const sender = (payload.sender ? payload.sender.login : (payload.comment ? payload.comment.user.login : "")).toLowerCase();
+            const association = (payload.comment ? payload.comment.author_association : "") || "";
+
+            let authorizedAdmins = ["faserf", "eidolf"];
+            let allowCollaborators = true;
+            try {
+              const res = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path: ".github/hermes-repo.yml"
+              });
+              const rawCfg = Buffer.from(res.data.content, "base64").toString("utf-8");
+              const adminMatch = rawCfg.match(/admins:\s*\n((?:\s*-\s*[\w\-]+\s*\n)+)/);
+              if (adminMatch) {
+                const parsed = adminMatch[1].split("\n").map(l => l.replace(/[-\s]/g, "").toLowerCase()).filter(Boolean);
+                if (parsed.length > 0) authorizedAdmins = parsed;
+              }
+              if (/allow_collaborators:\s*false/i.test(rawCfg)) {
+                allowCollaborators = false;
+              }
+            } catch (e) {
+              // Defaults to ["faserf", "eidolf"]
+            }
+
+            const isAdmin = authorizedAdmins.includes(sender);
+            const isCollab = allowCollaborators && ["OWNER", "MEMBER", "COLLABORATOR"].includes(association);
+            const canExecuteCritical = isAdmin || isCollab;
+
             if (isHelpCmd) {
               const helpBody = `> [!NOTE]\n` +
-                `> 🤖 **FaserF Hermes Agent Bot Commands**  \n` +
+                `> 🤖 **FaserF Hermes Agent Bot Commands & Permissions**  \n` +
                 `> Provided by [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)  \n\n` +
-                `Available commands in comments or interactive checkboxes:\n` +
-                `* \`@faserf-hermes-agent review\` (or checkbox \`[x] 🔄 Request re-review\`) — Re-trigger line-by-line review.\n` +
-                `* \`@faserf-hermes-agent resolve\` (or checkbox \`[x] ⚡ Auto-fix all findings\`) — Trigger autonomous SWE resolution via OpenHands.\n` +
-                `* \`@faserf-hermes-agent help\` — Display this command reference.\n`;
+                `**Public Commands (Anyone):**\n` +
+                `* \`@faserf-hermes-agent review\` (or \`[x] 🔄 Request re-review\`) — Trigger re-review of diff.\n` +
+                `* \`@faserf-hermes-agent help\` — Display this command reference.\n\n` +
+                `**Restricted Maintainer Actions (${authorizedAdmins.map(a => '@' + a).join(', ')}):**\n` +
+                `* \`@faserf-hermes-agent resolve\` (or \`[x] ⚡ Auto-fix all findings\`) — Autonomous SWE agent solver (OpenHands).\n` +
+                `* \`[x] ⏸️ Pause automated reviews\` — Pause automated bot evaluations.\n` +
+                `* *Configured per-repository via \`.github/hermes-repo.yml\`.*`;
 
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -75,6 +108,19 @@ jobs:
             }
 
             if (isResolveCmd) {
+              if (!canExecuteCritical) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `> [!WARNING]\n` +
+                    `> 🔒 **Permission Denied**  \n` +
+                    `> Automated code resolution (\`@faserf-hermes-agent resolve\` / OpenHands) is restricted to repository maintainers (\`${authorizedAdmins.map(a => '@' + a).join(', ')}\`).  \n` +
+                    `> Non-maintainers may still request reviews (\`@faserf-hermes-agent review\`) or ask maintainers to trigger auto-fixes.`
+                });
+                return;
+              }
+
               await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -86,7 +132,36 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issueNumber,
-                body: `> 🤖 **OpenHands Dispatch:** Autonomous investigation scheduled for #${issueNumber}. OpenHands agent is spinning up.`
+                body: `> 🤖 **OpenHands Dispatch:** Autonomous investigation scheduled for #${issueNumber} by @${sender}. OpenHands agent is spinning up.`
+              });
+              return;
+            }
+
+            if (isPauseCmd) {
+              if (!canExecuteCritical) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber,
+                  body: `> [!WARNING]\n` +
+                    `> 🔒 **Permission Denied**  \n` +
+                    `> Pausing automated reviews is restricted to repository maintainers (\`${authorizedAdmins.map(a => '@' + a).join(', ')}\`).`
+                });
+                return;
+              }
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: ["ai-review-paused"]
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                body: `> ⏸️ **Automated Reviews Paused:** Automated reviews on #${issueNumber} paused by @${sender}. Uncheck or run \`@faserf-hermes-agent review\` to resume.`
               });
               return;
             }
@@ -96,6 +171,8 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issueNumber,
-                body: `> 🔍 **PR Review Triggered:** Re-evaluating pull request #${issueNumber} with OmniRoute auto/coding engine. Review will appear shortly.`
+                body: `> 🔍 **PR Review Triggered:** Re-evaluating pull request #${issueNumber} by @${sender} with OmniRoute auto/coding engine. Review will appear shortly.`
               });
+              return;
+            }
             }

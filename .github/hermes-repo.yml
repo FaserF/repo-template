@@ -27,3 +27,17 @@ releases:
   enabled: true
   semantic: true
   draft: false
+
+# Role-Based Access Control (RBAC) & Interactive Bot Permissions
+permissions:
+  admins:
+    - FaserF
+    - Eidolf
+  allow_collaborators: true
+  public_actions:
+    - review
+    - help
+  restricted_actions:
+    - resolve
+    - autofix
+    - pause
