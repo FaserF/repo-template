@@ -19,6 +19,11 @@ on:
 jobs:
   review:
     name: Hermes PR Reviewer
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.action != 'review_requested' ||
+      contains(github.event.requested_reviewer.login, 'hermes') ||
+      contains(github.event.requested_reviewer.login, 'faserf')
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       contents: read
@@ -32,6 +37,24 @@ jobs:
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
+      - name: Request Hermes Bot as Reviewer
+        if: github.event.action == 'opened' || github.event.action == 'reopened'
+        uses: actions/github-script@v9
+        continue-on-error: true
+        with:
+          github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          script: |
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                reviewers: ['faserf-hermes-agent']
+              });
+            } catch (e) {
+              console.log('Bot review request notice:', e.message);
+            }
 
       - name: Setup Python
         uses: actions/setup-python@v7
