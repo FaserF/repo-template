@@ -4,13 +4,13 @@ on:
   workflow_call:
     inputs:
       omniroute_base_url:
-        description: "OmniRoute Base URL"
+        description: "OmniRoute Base URL (falls back to secret OMNIROUTE_BASE_URL if omitted)"
         type: string
-        default: "https://omniroute.fabiseitz.de/v1"
+        default: ""
       model:
-        description: "LLM Model"
+        description: "LLM Model (auto/coding or auto/smart)"
         type: string
-        default: "openai/auto/best-coding"
+        default: "auto/coding"
       max_iterations:
         description: "Maximum agent loop iterations"
         type: number
@@ -87,8 +87,8 @@ jobs:
 
           # 2. Invoke OmniRoute code resolution prompt
           api_key = os.environ.get("OMNIROUTE_API_KEY", "")
-          base_url = os.environ.get("OMNIROUTE_BASE_URL", "https://omniroute.fabiseitz.de/v1").rstrip("/")
-          model = os.environ.get("MODEL", "openai/auto/best-coding")
+          base_url = (os.environ.get("OMNIROUTE_BASE_URL", "") or "https://api.openai.com/v1").rstrip("/")
+          model = os.environ.get("MODEL", "auto/coding")
 
           # Write resolution marker if no direct code changes made yet
           patch_note = Path(".openhands_resolution.md")
@@ -103,7 +103,7 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
           OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_OPENHANDS_API_KEY || secrets.OMNIROUTE_API_KEY }}
-          OMNIROUTE_BASE_URL: ${{ inputs.omniroute_base_url }}
+          OMNIROUTE_BASE_URL: ${{ inputs.omniroute_base_url != '' && inputs.omniroute_base_url || secrets.OMNIROUTE_BASE_URL }}
           MODEL: ${{ inputs.model }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
@@ -124,6 +124,6 @@ jobs:
           ### Automated Pull Request by OpenHands & Hermes Fleet AI
           * **Issue:** #$ISSUE_NUM
           * **Bot:** [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)
-          * **Engine:** OmniRoute best-coding" \
+          * **Engine:** OmniRoute ${{ inputs.model }}" \
             --head "$BRANCH" \
             --base "${{ github.event.repository.default_branch }}" || true

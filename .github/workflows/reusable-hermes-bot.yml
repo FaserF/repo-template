@@ -4,13 +4,13 @@ on:
   workflow_call:
     inputs:
       omniroute_base_url:
-        description: "OmniRoute Base URL (default: public https://omniroute.fabiseitz.de/v1)"
+        description: "OmniRoute Base URL (falls back to secret OMNIROUTE_BASE_URL if omitted)"
         type: string
-        default: "https://omniroute.fabiseitz.de/v1"
+        default: ""
       model:
-        description: "OmniRoute Model"
+        description: "OmniRoute Model (auto/coding or auto/smart)"
         type: string
-        default: "openai/auto/best-coding"
+        default: "auto/coding"
 
 jobs:
   interactive-bot:
@@ -30,6 +30,9 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       - name: Process Interactive Command
+        env:
+          OMNIROUTE_BASE_URL: ${{ inputs.omniroute_base_url != '' && inputs.omniroute_base_url || secrets.OMNIROUTE_BASE_URL }}
+          OMNIROUTE_MODEL: ${{ inputs.model }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
@@ -86,6 +89,6 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issueNumber,
-                body: `> 🔍 **PR Review Triggered:** Re-evaluating pull request #${issueNumber} with OmniRoute best-coding engine. Review will appear shortly.`
+                body: `> 🔍 **PR Review Triggered:** Re-evaluating pull request #${issueNumber} with OmniRoute auto/coding engine. Review will appear shortly.`
               });
             }
