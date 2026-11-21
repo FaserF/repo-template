@@ -77,6 +77,10 @@ jobs:
               print("Missing review parameters. Exiting.")
               sys.exit(0)
 
+          if not omniroute_key:
+              print("No OMNIROUTE_API_KEY available (e.g. external fork). Exiting cleanly.")
+              sys.exit(0)
+
           headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json", "User-Agent": "FaserF-Hermes-Reviewer"}
           owner, name = repo.split("/")
           start_time = time.time()
@@ -212,9 +216,13 @@ jobs:
               }}
             ]
           }}
+          max_diff_len = 64000
+          is_diff_truncated = len(diff_text) > max_diff_len
+          analyzed_diff = diff_text[:max_diff_len]
+
           Diff:
           ```diff
-          {diff_text[:16000]}
+          {analyzed_diff}
           ```
           {cr_text}"""
 
@@ -231,7 +239,7 @@ jobs:
               parsed = json.loads(raw_out)
           except Exception as exc:
               print(f"OmniRoute review generation skipped: {exc}")
-              parsed = {"event": "APPROVE", "short_summary": "Automated hygiene verification completed.", "findings": []}
+              parsed = {"event": "COMMENT", "short_summary": f"Automated hygiene verification incomplete: {exc}", "findings": []}
 
           findings = parsed.get("findings", [])
           event = parsed.get("event", "APPROVE" if not findings else "REQUEST_CHANGES")
@@ -303,6 +311,8 @@ jobs:
           ]
           if hygiene_notes:
               body_lines.append(f"* **Worth a look:** {'; '.join(hygiene_notes[:4])}")
+          if is_diff_truncated:
+              body_lines.append(f"> ⚠️ **Large Diff Truncated:** Changes exceeded the 64KB single-turn threshold ({len(diff_text)} bytes). The review covers the first 64KB; critical changes beyond this threshold should receive manual maintainer verification.")
           body_lines.append("")
           if coderabbit_present and cr_comments and not skip_or_limited:
               body_lines.append(f"### 🤝 CodeRabbit Co-Review Reconciliation\n- **Analysis:** Reconciled {len(cr_comments)} existing CodeRabbit comment(s). Zero duplicate findings posted.\n- **Complementary Findings:** {len(findings)} new item(s) identified below.\n")

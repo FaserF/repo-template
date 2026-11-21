@@ -285,7 +285,7 @@ permissions:
         if not (github_dir / "hermes-repo.yml").exists():
             (github_dir / "hermes-repo.yml").write_text(hermes_cfg, encoding="utf-8")
 
-        # 3. Copy standard files from template
+        # 3. Copy standard files from template (preserving repo customizations)
         if TEMPLATE_LOCAL_DIR.exists():
             for src_rel in [
                 "AGENTS.md",
@@ -298,8 +298,24 @@ permissions:
                 src_path = TEMPLATE_LOCAL_DIR / src_rel
                 dst_path = clone_path / src_rel
                 if src_path.exists():
+                    # Preserve existing custom renovate.json and issue templates
+                    if dst_path.exists() and src_rel in [
+                        ".github/renovate.json",
+                        ".github/ISSUE_TEMPLATE/bug_report.yml",
+                        ".github/ISSUE_TEMPLATE/feature_request.yml",
+                        ".github/ISSUE_TEMPLATE/config.yml"
+                    ]:
+                        log.info("Preserving existing custom %s in %s", src_rel, repo_full_name)
+                        continue
+
                     dst_path.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(src_path, dst_path)
+
+                    # Dynamic project discussions link in config.yml
+                    if src_rel == ".github/ISSUE_TEMPLATE/config.yml":
+                        cfg_txt = dst_path.read_text(encoding="utf-8")
+                        cfg_txt = cfg_txt.replace("FaserF/repo-template/discussions", f"{repo_full_name}/discussions")
+                        dst_path.write_text(cfg_txt, encoding="utf-8")
 
         # 4. Generate caller workflows (preserving specialized CI if already present)
         existing_ci = workflows_dir / "ci.yml"
