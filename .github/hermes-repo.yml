@@ -16,7 +16,7 @@ openhands:
     - "openhands:ready"
   interactive_commands: true
 
-# Automated Code Review (CodeRabbit Parity)
+# Automated Code Review (FaserF Hermes Agent Bot)
 code_review:
   enabled: true
   pr_opened: true

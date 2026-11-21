@@ -1,4 +1,4 @@
-name: Reusable CodeRabbit-Parity Bot
+name: Reusable Hermes Bot
 
 on:
   workflow_call:
@@ -48,7 +48,7 @@ jobs:
 
             if (isHelpCmd) {
               const helpBody = `> [!NOTE]\n` +
-                `> 🤖 **Hermes Fleet Assistant Commands** (CodeRabbit Parity)  \n` +
+                `> 🤖 **FaserF Hermes Agent Bot Commands**  \n` +
                 `> Provided by [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)  \n\n` +
                 `Available commands in comments:\n` +
                 `* \`@faserf-hermes-agent review\` — Re-trigger automated line-by-line PR code review.\n` +
