@@ -22,7 +22,7 @@ jobs:
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Detect Project Architecture & Test Suites
         id: detect
@@ -77,7 +77,7 @@ jobs:
       # --- Python Setup & Pytest ---
       - name: Setup Python
         if: steps.detect.outputs.is_python == 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ inputs.python_version }}
           cache: "pip"
@@ -106,7 +106,7 @@ jobs:
       # --- Go Setup & Tests ---
       - name: Setup Go
         if: steps.detect.outputs.is_go == 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: "1.23"
           cache: true
@@ -119,9 +119,9 @@ jobs:
       # --- Node.js Setup & Tests ---
       - name: Setup Node.js
         if: steps.detect.outputs.is_node == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
           cache: "npm"
 
       - name: Run Node Tests
