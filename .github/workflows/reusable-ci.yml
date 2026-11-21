@@ -24,44 +24,66 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Detect Project Type
+      - name: Detect Project Architecture & Test Suites
         id: detect
         run: |
           TYPE="${{ inputs.project_type }}"
-          if [ "$TYPE" = "generic" ]; then
-            if [ -f "custom_components" ] || [ -d "custom_components" ]; then
-              TYPE="ha-integration"
-            elif [ -f "build.yaml" ] || [ -f "config.yaml" ] && [ -d "addon" ]; then
-              TYPE="ha-addon"
-            elif [ -f "go.mod" ]; then
-              TYPE="go"
-            elif [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
-              TYPE="python"
-            fi
+          IS_HA="false"
+          IS_ADDON="false"
+          IS_PYTHON="false"
+          IS_GO="false"
+          IS_NODE="false"
+          IS_DOCKER="false"
+
+          if [ -d "custom_components" ] || [ "$TYPE" = "ha-integration" ]; then
+            IS_HA="true"
+            IS_PYTHON="true"
           fi
-          echo "type=$TYPE" >> $GITHUB_OUTPUT
+          if [ -f "build.yaml" ] || [ -f "config.yaml" ] && [ -d "addon" ] || [ "$TYPE" = "ha-addon" ]; then
+            IS_ADDON="true"
+          fi
+          if [ -f "pyproject.toml" ] || [ -f "setup.py" ] || [ -f "requirements.txt" ] || [ -f "requirements_test.txt" ] || ls *.py >/dev/null 2>&1 || [ "$TYPE" = "python" ]; then
+            IS_PYTHON="true"
+          fi
+          if [ -f "go.mod" ] || [ "$TYPE" = "go" ]; then
+            IS_GO="true"
+          fi
+          if [ -f "package.json" ] || [ "$TYPE" = "node" ]; then
+            IS_NODE="true"
+          fi
+          if [ -f "Dockerfile" ] || [ -f "compose.yaml" ] || [ -f "docker-compose.yml" ]; then
+            IS_DOCKER="true"
+          fi
+
+          echo "is_ha=$IS_HA" >> $GITHUB_OUTPUT
+          echo "is_addon=$IS_ADDON" >> $GITHUB_OUTPUT
+          echo "is_python=$IS_PYTHON" >> $GITHUB_OUTPUT
+          echo "is_go=$IS_GO" >> $GITHUB_OUTPUT
+          echo "is_node=$IS_NODE" >> $GITHUB_OUTPUT
+          echo "is_docker=$IS_DOCKER" >> $GITHUB_OUTPUT
+          echo "Summary: HA=$IS_HA, Addon=$IS_ADDON, Python=$IS_PYTHON, Go=$IS_GO, Node=$IS_NODE, Docker=$IS_DOCKER"
 
       # --- Home Assistant Integration Tests ---
       - name: Hassfest Validation
-        if: steps.detect.outputs.type == 'ha-integration'
+        if: steps.detect.outputs.is_ha == 'true'
         uses: home-assistant/actions/hassfest@master
 
       - name: HACS Action Validation
-        if: steps.detect.outputs.type == 'ha-integration'
+        if: steps.detect.outputs.is_ha == 'true'
         uses: hacs/action@main
         with:
           category: integration
 
       # --- Python Setup & Pytest ---
       - name: Setup Python
-        if: steps.detect.outputs.type == 'ha-integration' || steps.detect.outputs.type == 'python'
+        if: steps.detect.outputs.is_python == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python_version }}
           cache: "pip"
 
       - name: Install Python Dependencies (uv-accelerated)
-        if: steps.detect.outputs.type == 'ha-integration' || steps.detect.outputs.type == 'python'
+        if: steps.detect.outputs.is_python == 'true'
         run: |
           python -m pip install uv || true
           if command -v uv >/dev/null 2>&1; then
@@ -77,19 +99,33 @@ jobs:
           $INSTALLER pytest pytest-asyncio pytest-homeassistant-custom-component ruff || true
 
       - name: Run Pytest Test Suite
-        if: (steps.detect.outputs.type == 'ha-integration' || steps.detect.outputs.type == 'python') && hashFiles('tests/**') != ''
+        if: steps.detect.outputs.is_python == 'true' && hashFiles('tests/**') != ''
         run: |
           pytest tests/ -v --timeout=60 || true
 
       # --- Go Setup & Tests ---
       - name: Setup Go
-        if: steps.detect.outputs.type == 'go'
+        if: steps.detect.outputs.is_go == 'true'
         uses: actions/setup-go@v5
         with:
           go-version: "1.23"
           cache: true
 
       - name: Run Go Tests
-        if: steps.detect.outputs.type == 'go'
+        if: steps.detect.outputs.is_go == 'true'
         run: |
           go test -v -race ./...
+
+      # --- Node.js Setup & Tests ---
+      - name: Setup Node.js
+        if: steps.detect.outputs.is_node == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Run Node Tests
+        if: steps.detect.outputs.is_node == 'true'
+        run: |
+          npm ci || npm install
+          npm test --if-present
