@@ -21,15 +21,23 @@
     },
     {
       "description": "Group Python dev / test dependencies",
-      "matchPackagePatterns": ["pytest", "ruff", "mypy", "coverage"],
       "groupName": "python test & lint dependencies",
-      "automerge": true
+      "automerge": true,
+      "matchPackageNames": [
+        "/pytest/",
+        "/ruff/",
+        "/mypy/",
+        "/coverage/"
+      ]
     },
     {
       "description": "Group Home Assistant dependencies",
-      "matchPackagePatterns": ["homeassistant", "pytest-homeassistant-custom-component"],
       "groupName": "home-assistant dependencies",
-      "automerge": false
+      "automerge": false,
+      "matchPackageNames": [
+        "/homeassistant/",
+        "/pytest-homeassistant-custom-component/"
+      ]
     }
   ]
 }
