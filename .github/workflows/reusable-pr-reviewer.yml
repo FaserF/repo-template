@@ -131,6 +131,46 @@ jobs:
               print("No diff to review.")
               sys.exit(0)
 
+          # 2c. AI & Deterministic Secret Scanner: Scan PR diff for credentials & exposed keys
+          secret_rules = [
+              ("GitHub Token", r"gh[pousr]_[A-Za-z0-9_]{36,}"),
+              ("AWS Access Key", r"AKIA[0-9A-Z]{16}"),
+              ("Private Key", r"-----BEGIN (?:RSA|OPENSSH|EC|DSA|PGP|PRIVATE) KEY-----"),
+              ("Slack Token", r"xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24,32}"),
+              ("Telegram Bot Token", r"[0-9]{8,10}:[a-zA-Z0-9_-]{35}"),
+              ("Tailscale Key", r"tskey-(?:auth|client)-[a-zA-Z0-9]+"),
+              ("Infisical Token", r"st\.[a-f0-9]{24,}\.[a-zA-Z0-9]{32,}"),
+              ("Hardcoded Secret/Password", r"(?i)(?:api[_-]?key|secret|password|auth[_-]?token|access[_-]?token)\s*[:=]\s*['\"][A-Za-z0-9_\-.~!@#$%^&*+=]{14,}['\"]"),
+          ]
+          secret_findings = []
+          curr_file = None
+          curr_line = 0
+          for d_line in diff_text.splitlines():
+              if d_line.startswith("+++ b/"):
+                  curr_file = d_line[6:].strip()
+              elif d_line.startswith("@@"):
+                  m = re.search(r"\+(\d+)", d_line)
+                  if m:
+                      curr_line = int(m.group(1)) - 1
+              elif d_line.startswith("+") and not d_line.startswith("+++"):
+                  curr_line += 1
+                  added_text = d_line[1:]
+                  if any(dummy in added_text.lower() for dummy in ["mock_", "fake_", "dummy_", "test_", "example", "placeholder", "xxx"]):
+                      continue
+                  for s_name, s_pat in secret_rules:
+                      if re.search(s_pat, added_text):
+                          secret_findings.append({
+                              "path": curr_file or "unknown",
+                              "line": curr_line,
+                              "severity": "Critical",
+                              "title": f"🚨 Security Alert: Leaked {s_name}",
+                              "body": f"> [!CAUTION]\n> 🚨 **Critical Secret Exposure:** Hardcoded `{s_name}` found in added lines.\n> Never commit plaintext secrets to Git repositories.\n> 1. Revoke / rotate this credential immediately.\n> 2. Remove it from branch history (`git commit --amend` or rebase).\n> 3. Reference environment variables via `.env` / Infisical.",
+                              "suggested_diff": "",
+                              "agent_prompt": f"Remove {s_name} from {curr_file} and load securely from environment variable."
+                          })
+              elif not d_line.startswith("-"):
+                  curr_line += 1
+
           # 2b. Check for existing CodeRabbit review findings (Platform API + GitHub comments)
           coderabbit_present, skip_or_limited = False, False
           cr_comments = []
@@ -242,8 +282,11 @@ jobs:
               print(f"OmniRoute review generation skipped: {exc}")
               parsed = {"event": "COMMENT", "short_summary": f"Automated hygiene verification incomplete: {exc}", "findings": []}
 
-          findings = parsed.get("findings", [])
-          event = parsed.get("event", "APPROVE" if not findings else "REQUEST_CHANGES")
+          findings = secret_findings + parsed.get("findings", [])
+          if secret_findings:
+              event = "REQUEST_CHANGES"
+          else:
+              event = parsed.get("event", "APPROVE" if not findings else "REQUEST_CHANGES")
 
           # 4. GraphQL: Auto-resolve addressed threads
           active_keys = {(f.get("path"), f.get("line")) for f in findings}
@@ -310,6 +353,8 @@ jobs:
               f"**Health of changed files: `{h_before:.2f} → {h_after:.2f} ({delta:+.2f})`** · Rating: {rating_icon} **{rating}**  ",
               f"* **Tests (estimate):** {test_est}",
           ]
+          if secret_findings:
+              body_lines.insert(6, f"> [!CAUTION]\n> 🚨 **SECURITY ALERT:** {len(secret_findings)} exposed credential(s) detected in this PR diff! Approval blocked until rotated and purged.\n")
           if hygiene_notes:
               body_lines.append(f"* **Worth a look:** {'; '.join(hygiene_notes[:4])}")
           if is_diff_truncated:
