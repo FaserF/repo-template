@@ -23,6 +23,11 @@ on:
 jobs:
   resolve:
     name: OpenHands Autonomous Solver
+    if: |
+      github.actor != 'faserf-hermes-agent[bot]' &&
+      !endsWith(github.actor, '[bot]') &&
+      !startsWith(github.actor, 'app/') &&
+      (github.event.issue == null || (github.event.issue.user.type != 'Bot' && !endsWith(github.event.issue.user.login, '[bot]') && !startsWith(github.event.issue.user.login, 'app/') && !contains(github.event.issue.title, 'Dependency Dashboard') && !contains(github.event.issue.title, 'Renovate') && !contains(github.event.issue.title, 'Dependabot')))
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       contents: write

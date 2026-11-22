@@ -19,6 +19,12 @@ on:
 jobs:
   interactive-bot:
     name: Hermes Interactive Bot
+    if: |
+      github.actor != 'faserf-hermes-agent[bot]' &&
+      !endsWith(github.actor, '[bot]') &&
+      !startsWith(github.actor, 'app/') &&
+      (github.event_name != 'issue_comment' || (github.event.comment.user.type != 'Bot' && !endsWith(github.event.comment.user.login, '[bot]') && !startsWith(github.event.comment.user.login, 'app/'))) &&
+      (github.event.issue == null || (!contains(github.event.issue.title, 'Dependency Dashboard') && !contains(github.event.issue.title, 'Renovate') && !contains(github.event.issue.title, 'Dependabot') && github.event.issue.user.type != 'Bot' && !endsWith(github.event.issue.user.login, '[bot]')))
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       issues: write
@@ -42,11 +48,38 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           script: |
             const payload = context.payload;
-            const comment = (payload.comment ? payload.comment.body : (payload.issue ? payload.issue.body : "")) || "";
+            const sender = (payload.sender ? payload.sender.login : (payload.comment ? payload.comment.user.login : "")).toLowerCase();
+            const senderType = payload.sender ? payload.sender.type : (payload.comment ? payload.comment.user.type : "");
+
+            // STRICT ANTI-LOOP & BOT EXCLUSION FILTER:
+            if (senderType === 'Bot' || sender.endsWith('[bot]') || sender.startsWith('app/') || context.actor.endsWith('[bot]')) {
+              console.log(`Skipping bot actor: ${sender} (actor: ${context.actor})`);
+              return;
+            }
+
+            const issueTitle = (payload.issue ? payload.issue.title : (payload.pull_request ? payload.pull_request.title : "")) || "";
+            if (/dependency dashboard|renovate|dependabot/i.test(issueTitle)) {
+              console.log(`Skipping dependency dashboard / automated bot issue: "${issueTitle}"`);
+              return;
+            }
+
+            if (payload.issue && payload.issue.user && (payload.issue.user.type === 'Bot' || payload.issue.user.login.endsWith('[bot]') || payload.issue.user.login.startsWith('app/'))) {
+              console.log(`Skipping issue opened by bot user: ${payload.issue.user.login}`);
+              return;
+            }
+
+            // Only inspect comment body on comment events; never fall back to issue body
+            let comment = "";
+            if (payload.comment) {
+              comment = payload.comment.body || "";
+            } else if (context.eventName === 'issues' && payload.issue) {
+              comment = payload.issue.body || "";
+            }
+
             const isPR = Boolean(payload.issue && payload.issue.pull_request) || Boolean(payload.pull_request);
             const issueNumber = payload.issue ? payload.issue.number : (payload.pull_request ? payload.pull_request.number : 0);
 
-            if (!issueNumber) return;
+            if (!issueNumber || !comment) return;
 
             const isReviewCmd = /@faserf-hermes-agent\s+(?:review|recheck|deep)|\/(?:review|recheck|deep)|\[x\]\s*(?:🔄\s*)?Request re-review/i.test(comment);
             const isResolveCmd = /@faserf-hermes-agent\s+(?:resolve|autofix|fix-ci|rebase|merge)|\/(?:resolve|autofix|fix-ci|rebase|merge)|\[x\]\s*(?:⚡\s*)?Auto-fix|\[x\]\s*(?:🛠️\s*)?Resolve with OpenHands/i.test(comment);

@@ -15,6 +15,16 @@ on:
 jobs:
   triage:
     name: Issue Triage & Checklist
+    if: |
+      github.actor != 'faserf-hermes-agent[bot]' &&
+      !endsWith(github.actor, '[bot]') &&
+      !startsWith(github.actor, 'app/') &&
+      github.event.issue.user.type != 'Bot' &&
+      !endsWith(github.event.issue.user.login, '[bot]') &&
+      !startsWith(github.event.issue.user.login, 'app/') &&
+      !contains(github.event.issue.title, 'Dependency Dashboard') &&
+      !contains(github.event.issue.title, 'Renovate') &&
+      !contains(github.event.issue.title, 'Dependabot')
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       issues: write
@@ -34,8 +44,22 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           script: |
             const issue = context.payload.issue;
-            const issueBody = issue.body || "";
+            if (!issue) return;
+
+            const author = (issue.user ? issue.user.login : "").toLowerCase();
+            const authorType = issue.user ? issue.user.type : "";
             const issueTitle = issue.title || "";
+            const issueBody = issue.body || "";
+
+            // STRICT BOT & DEPENDENCY DASHBOARD FILTER:
+            if (authorType === 'Bot' || author.endsWith('[bot]') || author.startsWith('app/') || context.actor.endsWith('[bot]')) {
+              console.log(`Skipping bot issue author: ${author}`);
+              return;
+            }
+            if (/dependency dashboard|renovate|dependabot/i.test(issueTitle)) {
+              console.log(`Skipping dependency dashboard / automated tracker: "${issueTitle}"`);
+              return;
+            }
             const labels = issue.labels.map(l => l.name);
 
             // 1. Fetch latest release details
