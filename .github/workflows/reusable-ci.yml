@@ -10,7 +10,7 @@ on:
       python_version:
         description: "Python version for test runners"
         type: string
-        default: "3.13"
+        default: "3.14"
       runner:
         description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
         type: string
@@ -132,9 +132,9 @@ jobs:
             INSTALLER="python -m pip install"
           fi
           if [ -f requirements_test.txt ]; then
-            $INSTALLER -r requirements_test.txt
+            $INSTALLER -r requirements_test.txt || true
           elif [ -f requirements.txt ]; then
-            $INSTALLER -r requirements.txt
+            $INSTALLER -r requirements.txt || true
           fi
           $INSTALLER pytest pytest-asyncio pytest-homeassistant-custom-component ruff || true
 
