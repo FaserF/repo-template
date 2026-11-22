@@ -19,7 +19,7 @@ on:
 jobs:
   review:
     name: Hermes PR Reviewer
-    timeout-minutes: 10
+    timeout-minutes: 20
     if: |
       github.event_name != 'pull_request' ||
       github.event.action != 'review_requested' ||
@@ -272,7 +272,7 @@ jobs:
 
           try:
               llm_req = urllib.request.Request(f"{omniroute_url}/chat/completions", headers=llm_headers, data=llm_payload)
-              with urllib.request.urlopen(llm_req, timeout=80) as resp:
+              with urllib.request.urlopen(llm_req, timeout=180) as resp:
                   llm_resp = json.loads(resp.read().decode())
               raw_out = llm_resp["choices"][0]["message"]["content"].strip()
               if raw_out.startswith("```"):
