@@ -79,13 +79,19 @@ jobs:
             const isPR = Boolean(payload.issue && payload.issue.pull_request) || Boolean(payload.pull_request);
             const issueNumber = payload.issue ? payload.issue.number : (payload.pull_request ? payload.pull_request.number : 0);
 
-            if (!issueNumber || !comment) return;
+            // Strip markdown blockquotes so quoted prior comments/bot responses never trigger actions
+            const commandText = comment
+              .split('\n')
+              .filter(line => !line.trim().startsWith('>'))
+              .join('\n');
 
-            const isReviewCmd = /@faserf-hermes-agent\s+(?:review|recheck|deep)|\/(?:review|recheck|deep)|\[x\]\s*(?:🔄\s*)?Request re-review/i.test(comment);
-            const isResolveCmd = /@faserf-hermes-agent\s+(?:resolve|autofix|fix-ci|rebase|merge)|\/(?:resolve|autofix|fix-ci|rebase|merge)|\[x\]\s*(?:⚡\s*)?Auto-fix|\[x\]\s*(?:🛠️\s*)?Resolve with OpenHands/i.test(comment);
-            const isDocCmd = /@faserf-hermes-agent\s+(?:doc|docs|document)|\/(?:doc|docs|document)|\[x\]\s*(?:📚\s*)?Update docs/i.test(comment);
-            const isPauseCmd = /\[x\]\s*(?:⏸️\s*)?Pause automated reviews|@faserf-hermes-agent\s+pause/i.test(comment);
-            const isHelpCmd = /@faserf-hermes-agent\s+help|\/help/i.test(comment);
+            if (!issueNumber || !commandText.trim()) return;
+
+            const isReviewCmd = /@faserf-hermes-agent\s+(?:review|recheck|deep)|\/(?:review|recheck|deep)|\[x\]\s*(?:🔄\s*)?Request re-review/i.test(commandText);
+            const isResolveCmd = /@faserf-hermes-agent\s+(?:resolve|autofix|fix-ci|rebase|merge)|\/(?:resolve|autofix|fix-ci|rebase|merge)|\[x\]\s*(?:⚡\s*)?Auto-fix|\[x\]\s*(?:🛠️\s*)?Resolve with OpenHands/i.test(commandText);
+            const isDocCmd = /@faserf-hermes-agent\s+(?:doc|docs|document)|\/(?:doc|docs|document)|\[x\]\s*(?:📚\s*)?Update docs/i.test(commandText);
+            const isPauseCmd = /\[x\]\s*(?:⏸️\s*)?Pause automated reviews|@faserf-hermes-agent\s+pause/i.test(commandText);
+            const isHelpCmd = /@faserf-hermes-agent\s+help|\/help/i.test(commandText);
 
             if (!isReviewCmd && !isResolveCmd && !isPauseCmd && !isHelpCmd && !isDocCmd) {
               return;
@@ -171,8 +177,8 @@ jobs:
                   issue_number: issueNumber,
                   body: `> [!WARNING]\n` +
                     `> 🔒 **Permission Denied**  \n` +
-                    `> Automated code resolution (\`@faserf-hermes-agent resolve\` / OpenHands) is restricted to configured maintainers (\`${adminListText}\`).  \n` +
-                    `> Non-maintainers may still request reviews (\`@faserf-hermes-agent review\`) or ask maintainers to trigger auto-fixes.`
+                    `> Automated code resolution (\`resolve\` / OpenHands) is restricted to configured maintainers (\`${adminListText}\`).  \n` +
+                    `> Non-maintainers may still request reviews or ask maintainers to trigger auto-fixes.`
                 });
                 return;
               }
