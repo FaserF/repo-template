@@ -220,6 +220,30 @@ jobs:
 """
 
 
+def get_caller_workflow_security_scanner() -> str:
+    return f"""name: Security Scanner
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{{{ github.workflow }}}}-${{{{ github.ref }}}}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  security-scan:
+    uses: {TEMPLATE_REPO}/.github/workflows/reusable-security-scanner.yml@{TEMPLATE_VERSION}
+    secrets: inherit
+"""
+
+
 def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
     """Clone, harmonize with FaserF/repo-template, and open PR via faserf-hermes-agent[bot]."""
     log.info("Processing repository %s ...", repo_full_name)
@@ -232,22 +256,31 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
             log.error("Failed to clone %s: %s", repo_full_name, err)
             return False
 
-        # Skip only if already correctly synced at current version
-        ci_yml = clone_path / ".github" / "workflows" / "ci.yml"
-        ci_orch = clone_path / ".github" / "workflows" / "ci-orchestrator.yml"
-        hermes_yml = clone_path / ".github" / "hermes-repo.yml"
+        # Skip only if already correctly synced at current version without obsolete workflows
+        github_dir = clone_path / ".github"
+        workflows_dir = github_dir / "workflows"
+        ci_yml = workflows_dir / "ci.yml"
+        sec_yml = workflows_dir / "security-scanner.yml"
+        hermes_yml = github_dir / "hermes-repo.yml"
 
-        # If both custom ci-orchestrator and duplicate ci.yml exist, we must clean it up
-        if ci_orch.exists() and ci_yml.exists():
-            already_synced = False
-        else:
-            already_synced = (
-                hermes_yml.exists()
-                and (
-                    ci_orch.exists()
-                    or (ci_yml.exists() and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}" in ci_yml.read_text(encoding="utf-8", errors="ignore"))
-                )
-            )
+        has_obsolete = False
+        if workflows_dir.exists():
+            for obs in [
+                "ci-orchestrator.yml", "issue-orchestrator.yml",
+                "validate-integration.yaml", "validate-integration.yml",
+                "validate.yaml", "validate.yml"
+            ]:
+                if (workflows_dir / obs).exists():
+                    has_obsolete = True
+                    break
+
+        already_synced = (
+            not has_obsolete
+            and hermes_yml.exists()
+            and sec_yml.exists()
+            and ci_yml.exists()
+            and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}" in ci_yml.read_text(encoding="utf-8", errors="ignore")
+        )
 
         if already_synced:
             log.info("Repository %s already has correct template baseline at %s. Skipping.", repo_full_name, TEMPLATE_VERSION)
@@ -328,22 +361,35 @@ permissions:
                         cfg_txt = cfg_txt.replace("FaserF/repo-template/discussions", f"{repo_full_name}/discussions")
                         dst_path.write_text(cfg_txt, encoding="utf-8")
 
-        # 4. Generate caller workflows (preserving specialized CI if already present)
+        # 4. Remove obsolete legacy workflows
+        for obsolete in [
+            "ci-orchestrator.yml",
+            "issue-orchestrator.yml",
+            "validate-integration.yaml",
+            "validate-integration.yml",
+            "validate.yaml",
+            "validate.yml",
+            "ci-pipeline.yml",
+            "lint-and-test.yml",
+        ]:
+            obs_path = workflows_dir / obsolete
+            if obs_path.exists():
+                log.info("Removing obsolete pre-template workflow %s in %s", obsolete, repo_full_name)
+                obs_path.unlink()
+
+        # 5. Generate caller workflows (preserving specialized CI if already present)
         has_custom_ci = False
-        for candidate in ["ci.yml", "ci-orchestrator.yml", "test.yml", "tests.yml", "build.yml", "pipeline.yml"]:
-            c_path = workflows_dir / candidate
-            if c_path.exists() and TEMPLATE_REPO not in c_path.read_text(encoding="utf-8", errors="ignore"):
-                has_custom_ci = True
-                break
+        if repo_type != "ha-integration":
+            for candidate in ["test.yml", "tests.yml", "build.yml", "pipeline.yml"]:
+                c_path = workflows_dir / candidate
+                if c_path.exists() and TEMPLATE_REPO not in c_path.read_text(encoding="utf-8", errors="ignore"):
+                    has_custom_ci = True
+                    break
 
         if not has_custom_ci:
             (workflows_dir / "ci.yml").write_text(get_caller_workflow_ci(repo_type), encoding="utf-8")
         else:
             log.info("Preserving repository's specialized CI pipeline in %s", repo_full_name)
-            tmpl_ci = workflows_dir / "ci.yml"
-            if tmpl_ci.exists() and TEMPLATE_REPO in tmpl_ci.read_text(encoding="utf-8", errors="ignore") and (workflows_dir / "ci-orchestrator.yml").exists():
-                log.info("Removing duplicate template ci.yml in favor of pre-existing ci-orchestrator.yml in %s", repo_full_name)
-                tmpl_ci.unlink()
 
         (workflows_dir / "linter.yml").write_text(get_caller_workflow_linter(), encoding="utf-8")
         (workflows_dir / "issue-triage.yml").write_text(get_caller_workflow_issue_triage(), encoding="utf-8")
@@ -351,6 +397,7 @@ permissions:
         (workflows_dir / "openhands-resolver.yml").write_text(get_caller_workflow_openhands(), encoding="utf-8")
         (workflows_dir / "release.yml").write_text(get_caller_workflow_release(), encoding="utf-8")
         (workflows_dir / "pr-reviewer.yml").write_text(get_caller_workflow_pr_reviewer(), encoding="utf-8")
+        (workflows_dir / "security-scanner.yml").write_text(get_caller_workflow_security_scanner(), encoding="utf-8")
 
         # 5. Sanitize any legacy workflows or templates for personal links
         for f in github_dir.rglob("*.y*ml"):
