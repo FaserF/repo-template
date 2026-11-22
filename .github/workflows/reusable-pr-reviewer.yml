@@ -19,6 +19,7 @@ on:
 jobs:
   review:
     name: Hermes PR Reviewer
+    timeout-minutes: 10
     if: |
       github.event_name != 'pull_request' ||
       github.event.action != 'review_requested' ||

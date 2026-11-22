@@ -15,6 +15,7 @@ on:
 jobs:
   triage:
     name: Issue Triage & Checklist
+    timeout-minutes: 5
     if: |
       github.actor != 'faserf-hermes-agent[bot]' &&
       !endsWith(github.actor, '[bot]') &&

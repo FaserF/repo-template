@@ -19,6 +19,7 @@ on:
 jobs:
   interactive-bot:
     name: Hermes Interactive Bot
+    timeout-minutes: 5
     if: |
       github.actor != 'faserf-hermes-agent[bot]' &&
       !endsWith(github.actor, '[bot]') &&

@@ -15,6 +15,10 @@ on:
         description: "Maximum agent loop iterations"
         type: number
         default: 25
+      timeout_minutes:
+        description: "Timeout in minutes for OpenHands execution (default: 60)"
+        type: number
+        default: 60
       runner:
         description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
         type: string
@@ -23,6 +27,7 @@ on:
 jobs:
   resolve:
     name: OpenHands Autonomous Solver
+    timeout-minutes: ${{ inputs.timeout_minutes || 60 }}
     if: |
       github.actor != 'faserf-hermes-agent[bot]' &&
       !endsWith(github.actor, '[bot]') &&
