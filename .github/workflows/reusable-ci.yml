@@ -91,7 +91,7 @@ jobs:
         continue-on-error: true
 
       - name: HACS Action Validation
-        if: steps.detect.outputs.is_ha == 'true'
+        if: steps.detect.outputs.is_ha == 'true' && github.event.repository.private != true
         uses: hacs/action@main
         with:
           category: integration
@@ -101,9 +101,9 @@ jobs:
       - name: Setup Python
         if: steps.detect.outputs.is_python == 'true'
         uses: actions/setup-python@v7
+        continue-on-error: true
         with:
           python-version: ${{ inputs.python_version }}
-          cache: "pip"
 
       - name: Install Python Dependencies (uv-accelerated)
         if: steps.detect.outputs.is_python == 'true'
