@@ -4,18 +4,37 @@
     "config:recommended",
     ":dependencyDashboard",
     ":semanticCommits",
+    ":automergePatch",
     ":automergeMinor",
     ":automergeDigest",
     ":prHourlyLimitNone",
     ":prConcurrentLimitNone"
   ],
   "timezone": "Europe/Berlin",
-  "schedule": ["before 6am on monday"],
-  "assignees": ["FaserF"],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "assignees": [
+    "FaserF"
+  ],
   "packageRules": [
     {
+      "description": "Automatically merge all minor and patch updates once CI is green",
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
       "description": "Group GitHub Actions updates",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github-actions dependencies",
       "automerge": true
     },

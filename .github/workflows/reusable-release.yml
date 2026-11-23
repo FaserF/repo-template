@@ -19,7 +19,7 @@ on:
 jobs:
   release:
     name: Create GitHub Release
-    timeout-minutes: 5
+    timeout-minutes: 10
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       contents: write
@@ -38,16 +38,41 @@ jobs:
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Generate Changelog & Release
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+
+      - name: Determine Previous Release Tag & Generate Structured Changelog
+        id: changelog
+        shell: bash
+        run: |
+          TARGET_TAG="${{ inputs.tag_name || github.ref_name }}"
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | grep -v "^$TARGET_TAG$" | head -n 1 || true)
+          echo "Target tag: $TARGET_TAG, Previous tag: $PREV_TAG"
+          
+          if [ -f scripts/generate_changelog.py ]; then
+            python3 scripts/generate_changelog.py --from-tag "$PREV_TAG" --repo "${{ github.repository }}" > RELEASE_NOTES.md
+          else
+            echo "scripts/generate_changelog.py not found in target repo; fetching from repo-template"
+            curl -fsSL https://raw.githubusercontent.com/FaserF/repo-template/main/scripts/generate_changelog.py -o /tmp/generate_changelog.py
+            python3 /tmp/generate_changelog.py --from-tag "$PREV_TAG" --repo "${{ github.repository }}" > RELEASE_NOTES.md
+          fi
+          
+          echo "Generated release notes:"
+          head -n 25 RELEASE_NOTES.md
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           tag_name: ${{ inputs.tag_name || github.ref_name }}
           name: ${{ inputs.tag_name || github.ref_name }}
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
           draft: ${{ inputs.draft }}
 
       - name: Update Floating Major Version Tag
+        shell: bash
         run: |
           TAG="${{ inputs.tag_name || github.ref_name }}"
           if [[ "$TAG" =~ ^v([0-9]+)\. ]]; then

@@ -1,0 +1,160 @@
+name: Scheduled Autonomous Release
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"  # Every Monday at 05:00 UTC (after Renovate at 04:00 UTC)
+  workflow_dispatch:
+    inputs:
+      force_bump:
+        description: "Force version bump type ('patch', 'minor', or 'auto')"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: scheduled-release
+  cancel-in-progress: false
+
+jobs:
+  check-and-release:
+    name: Determine & Publish Weekly Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Bot Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+          owner: FaserF
+
+      - name: Checkout Code
+        uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+
+      - name: Evaluate Commits & Compute Target Version
+        id: eval
+        shell: bash
+        run: |
+          LATEST_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
+          echo "Latest semantic tag found: $LATEST_TAG"
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v1.0.0"
+          fi
+          
+          # Inspect all commits since LATEST_TAG
+          COMMIT_LOG=$(git log "$LATEST_TAG"..HEAD --pretty=format:"%h|%an|%ae|%s" || true)
+          TOTAL_COMMITS=$(echo "$COMMIT_LOG" | grep -v '^$' | wc -l || echo 0)
+          echo "Total new commits since $LATEST_TAG: $TOTAL_COMMITS"
+          
+          if [ "$TOTAL_COMMITS" -eq 0 ]; then
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "No new commits since $LATEST_TAG. Skipping release."
+            exit 0
+          fi
+          
+          HAS_NON_BOT=false
+          HAS_DEPS_UPDATE=false
+          
+          while IFS='|' read -r hash author email subject; do
+            [ -z "$hash" ] && continue
+            echo "Evaluating commit: $hash ($author) -> $subject"
+            
+            author_lower=$(echo "$author" | tr '[:upper:]' '[:lower:]')
+            subject_lower=$(echo "$subject" | tr '[:upper:]' '[:lower:]')
+            
+            # Check if this is a dependency update
+            if [[ "$subject_lower" =~ (chore\(deps\)|deps:|dependencies|renovate|bump) ]]; then
+              HAS_DEPS_UPDATE=true
+            fi
+            
+            # Check if commit is from an external/human author (not renovate, github-actions, faserf-hermes-agent bot)
+            if [[ ! "$author_lower" =~ (renovate|github-actions|bot|faserf-hermes-agent) ]] &&                [[ ! "$subject_lower" =~ (chore\(deps\)|release|bump) ]]; then
+              HAS_NON_BOT=true
+            fi
+          done <<< "$COMMIT_LOG"
+          
+          echo "HAS_NON_BOT=$HAS_NON_BOT"
+          echo "HAS_DEPS_UPDATE=$HAS_DEPS_UPDATE"
+          
+          FORCE_BUMP="${{ github.event.inputs.force_bump || 'auto' }}"
+          BUMP_TYPE=""
+          
+          if [ "$FORCE_BUMP" != "auto" ] && [ -n "$FORCE_BUMP" ]; then
+            BUMP_TYPE="$FORCE_BUMP"
+          elif [ "$HAS_NON_BOT" = "true" ]; then
+            BUMP_TYPE="minor"
+          elif [ "$HAS_DEPS_UPDATE" = "true" ] || [ "$TOTAL_COMMITS" -gt 0 ]; then
+            BUMP_TYPE="patch"
+          fi
+          
+          if [ -z "$BUMP_TYPE" ]; then
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "No release-qualifying commits found."
+            exit 0
+          fi
+          
+          # Parse SemVer
+          [[ "$LATEST_TAG" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+) ]]
+          MAJOR="${BASH_REMATCH[1]}"
+          MINOR="${BASH_REMATCH[2]}"
+          PATCH="${BASH_REMATCH[3]}"
+          
+          if [ "$BUMP_TYPE" = "minor" ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          else
+            PATCH=$((PATCH + 1))
+          fi
+          
+          NEW_TAG="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "Calculated new release tag: $NEW_TAG (type: $BUMP_TYPE)"
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
+          echo "prev_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Generate Structured Changelog
+        if: steps.eval.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          python3 scripts/generate_changelog.py --from-tag "${{ steps.eval.outputs.prev_tag }}" --repo "${{ github.repository }}" > RELEASE_NOTES.md
+          echo "Generated Release Notes:"
+          cat RELEASE_NOTES.md
+
+      - name: Publish Tag & GitHub Release
+        if: steps.eval.outputs.should_release == 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          tag_name: ${{ steps.eval.outputs.new_tag }}
+          name: ${{ steps.eval.outputs.new_tag }}
+          body_path: RELEASE_NOTES.md
+          draft: false
+
+      - name: Update Floating Major Version Tag
+        if: steps.eval.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          NEW_TAG="${{ steps.eval.outputs.new_tag }}"
+          [[ "$NEW_TAG" =~ ^v([0-9]+)\. ]]
+          MAJOR="v${BASH_REMATCH[1]}"
+          echo "Updating floating major tag $MAJOR -> $NEW_TAG"
+          git config user.name "faserf-hermes-agent[bot]"
+          git config user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
+          git tag -fa "$MAJOR" -m "Release $NEW_TAG (floating major tag $MAJOR)"
+          git push origin "$MAJOR" --force
