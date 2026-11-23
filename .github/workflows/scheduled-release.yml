@@ -42,11 +42,6 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v7
-        with:
-          python-version: "3.15"
-
       - name: Evaluate Commits & Compute Target Version
         id: eval
         shell: bash
@@ -84,7 +79,8 @@ jobs:
             fi
             
             # Check if commit is from an external/human author (not renovate, github-actions, faserf-hermes-agent bot)
-            if [[ ! "$author_lower" =~ (renovate|github-actions|bot|faserf-hermes-agent) ]] &&                [[ ! "$subject_lower" =~ (chore\(deps\)|release|bump) ]]; then
+            if [[ ! "$author_lower" =~ (renovate|github-actions|bot|faserf-hermes-agent) ]] && \
+               [[ ! "$subject_lower" =~ (chore\(deps\)|release|bump) ]]; then
               HAS_NON_BOT=true
             fi
           done <<< "$COMMIT_LOG"
@@ -128,22 +124,14 @@ jobs:
           echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
           echo "prev_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
-      - name: Generate Structured Changelog
-        if: steps.eval.outputs.should_release == 'true'
-        shell: bash
-        run: |
-          python3 scripts/generate_changelog.py --from-tag "${{ steps.eval.outputs.prev_tag }}" --repo "${{ github.repository }}" > RELEASE_NOTES.md
-          echo "Generated Release Notes:"
-          cat RELEASE_NOTES.md
-
-      - name: Publish Tag & GitHub Release
+      - name: Publish GitHub Release (Native Release Notes)
         if: steps.eval.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ steps.app-token.outputs.token }}
           tag_name: ${{ steps.eval.outputs.new_tag }}
           name: ${{ steps.eval.outputs.new_tag }}
-          body_path: RELEASE_NOTES.md
+          generate_release_notes: true
           draft: false
 
       - name: Update Floating Major Version Tag
