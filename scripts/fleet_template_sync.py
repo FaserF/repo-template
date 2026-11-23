@@ -328,11 +328,15 @@ permissions:
         if not (github_dir / "hermes-repo.yml").exists():
             (github_dir / "hermes-repo.yml").write_text(hermes_cfg, encoding="utf-8")
 
-        # 3. Copy standard files from template (preserving repo customizations)
+        # 3. Copy standard files and shared scripts from template (preserving repo customizations)
         if TEMPLATE_LOCAL_DIR.exists():
             for src_rel in [
                 "AGENTS.md",
+                ".gitattributes",
                 ".github/FUNDING.yml",
+                ".github/CODEOWNERS",
+                ".github/PULL_REQUEST_TEMPLATE.md",
+                ".github/labeler.yml",
                 ".github/renovate.json",
                 ".github/ISSUE_TEMPLATE/bug_report.yml",
                 ".github/ISSUE_TEMPLATE/feature_request.yml",
@@ -360,6 +364,17 @@ permissions:
                         cfg_txt = dst_path.read_text(encoding="utf-8")
                         cfg_txt = cfg_txt.replace("FaserF/repo-template/discussions", f"{repo_full_name}/discussions")
                         dst_path.write_text(cfg_txt, encoding="utf-8")
+
+            # Sync shared helper scripts from template scripts/ directory
+            src_scripts_dir = TEMPLATE_LOCAL_DIR / "scripts"
+            if src_scripts_dir.is_dir():
+                for script_file in src_scripts_dir.glob("*.py"):
+                    if script_file.name == "fleet_template_sync.py":
+                        continue
+                    dst_script = clone_path / "scripts" / script_file.name
+                    dst_script.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(script_file, dst_script)
+                    log.info("Synced script %s -> %s", script_file.name, repo_full_name)
 
         # 4. Remove obsolete legacy workflows
         for obsolete in [
