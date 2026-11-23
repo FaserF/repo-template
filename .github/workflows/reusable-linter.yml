@@ -11,28 +11,49 @@ on:
 jobs:
   lint:
     name: Code Quality & Linting
-    timeout-minutes: 5
+    timeout-minutes: 10
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
 
-      - name: Detect Python files
-        id: py_detect
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+
+      - name: Detect Project Components
+        id: detect
         run: |
+          has_py="false"
+          has_node="false"
           if find . -name "*.py" -not -path "./.git/*" | grep -q .; then
-            echo "has_python=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_python=false" >> $GITHUB_OUTPUT
+            has_py="true"
           fi
+          if [ -f "package.json" ] || [ -f "apps/gamakay-ui/package.json" ]; then
+            has_node="true"
+          fi
+          echo "has_python=$has_py" >> $GITHUB_OUTPUT
+          echo "has_node=$has_node" >> $GITHUB_OUTPUT
 
       - name: Ruff Linter & Formatter (Python)
-        if: steps.py_detect.outputs.has_python == 'true'
+        if: steps.detect.outputs.has_python == 'true'
         uses: astral-sh/ruff-action@v4.1.0
         with:
           args: "check --select E,F,W,I,UP --ignore E501,C901"
-        continue-on-error: true
 
       - name: Actionlint (GitHub Actions Workflows)
         uses: raven-actions/actionlint@v2
-        continue-on-error: true
+
+      - name: Web & Frontend Linting
+        if: steps.detect.outputs.has_node == 'true'
+        run: |
+          if [ -f "package.json" ]; then
+            npm ci --ignore-scripts || npm install --ignore-scripts
+            npm run lint --if-present
+          fi
+          if [ -f "apps/gamakay-ui/package.json" ]; then
+            cd apps/gamakay-ui
+            npm ci --ignore-scripts || npm install --ignore-scripts
+            npm run lint --if-present
+          fi
