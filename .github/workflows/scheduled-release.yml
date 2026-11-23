@@ -42,6 +42,11 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
 
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+
       - name: Evaluate Commits & Compute Target Version
         id: eval
         shell: bash
@@ -52,7 +57,6 @@ jobs:
             LATEST_TAG="v1.0.0"
           fi
           
-          # Inspect all commits since LATEST_TAG
           COMMIT_LOG=$(git log "$LATEST_TAG"..HEAD --pretty=format:"%h|%an|%ae|%s" || true)
           TOTAL_COMMITS=$(echo "$COMMIT_LOG" | grep -v '^$' | wc -l || echo 0)
           echo "Total new commits since $LATEST_TAG: $TOTAL_COMMITS"
@@ -73,14 +77,11 @@ jobs:
             author_lower=$(echo "$author" | tr '[:upper:]' '[:lower:]')
             subject_lower=$(echo "$subject" | tr '[:upper:]' '[:lower:]')
             
-            # Check if this is a dependency update
             if [[ "$subject_lower" =~ (chore\(deps\)|deps:|dependencies|renovate|bump) ]]; then
               HAS_DEPS_UPDATE=true
             fi
             
-            # Check if commit is from an external/human author (not renovate, github-actions, faserf-hermes-agent bot)
-            if [[ ! "$author_lower" =~ (renovate|github-actions|bot|faserf-hermes-agent) ]] && \
-               [[ ! "$subject_lower" =~ (chore\(deps\)|release|bump) ]]; then
+            if [[ ! "$author_lower" =~ (renovate|github-actions|bot|faserf-hermes-agent) ]] &&                [[ ! "$subject_lower" =~ (chore\(deps\)|release|bump) ]]; then
               HAS_NON_BOT=true
             fi
           done <<< "$COMMIT_LOG"
@@ -105,7 +106,6 @@ jobs:
             exit 0
           fi
           
-          # Parse SemVer
           [[ "$LATEST_TAG" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+) ]]
           MAJOR="${BASH_REMATCH[1]}"
           MINOR="${BASH_REMATCH[2]}"
@@ -124,14 +124,22 @@ jobs:
           echo "new_tag=$NEW_TAG" >> $GITHUB_OUTPUT
           echo "prev_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
-      - name: Publish GitHub Release (Native Release Notes)
+      - name: Generate Changelog for GitHub Release
+        if: steps.eval.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          python3 scripts/generate_changelog.py --from-tag "${{ steps.eval.outputs.prev_tag }}" --repo "${{ github.repository }}" > /tmp/gh_release_body.md
+          echo "Generated Release Body:"
+          cat /tmp/gh_release_body.md
+
+      - name: Publish GitHub Release
         if: steps.eval.outputs.should_release == 'true'
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ steps.app-token.outputs.token }}
           tag_name: ${{ steps.eval.outputs.new_tag }}
           name: ${{ steps.eval.outputs.new_tag }}
-          generate_release_notes: true
+          body_path: /tmp/gh_release_body.md
           draft: false
 
       - name: Update Floating Major Version Tag

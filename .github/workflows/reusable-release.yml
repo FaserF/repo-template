@@ -38,13 +38,36 @@ jobs:
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Publish GitHub Release (Native Release Notes)
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.15"
+
+      - name: Generate Changelog for GitHub Release
+        id: changelog
+        shell: bash
+        run: |
+          TARGET_TAG="${{ inputs.tag_name || github.ref_name }}"
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | grep -v "^$TARGET_TAG$" | head -n 1 || true)
+          echo "Target tag: $TARGET_TAG, Previous tag: $PREV_TAG"
+          
+          if [ -f scripts/generate_changelog.py ]; then
+            python3 scripts/generate_changelog.py --from-tag "$PREV_TAG" --repo "${{ github.repository }}" > /tmp/gh_release_body.md
+          else
+            curl -fsSL https://raw.githubusercontent.com/FaserF/repo-template/main/scripts/generate_changelog.py -o /tmp/generate_changelog.py
+            python3 /tmp/generate_changelog.py --from-tag "$PREV_TAG" --repo "${{ github.repository }}" > /tmp/gh_release_body.md
+          fi
+          
+          echo "Generated release body preview:"
+          head -n 25 /tmp/gh_release_body.md
+
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           tag_name: ${{ inputs.tag_name || github.ref_name }}
           name: ${{ inputs.tag_name || github.ref_name }}
-          generate_release_notes: true
+          body_path: /tmp/gh_release_body.md
           draft: ${{ inputs.draft }}
 
       - name: Update Floating Major Version Tag
