@@ -29,7 +29,7 @@ jobs:
             LOAD_1M=$(awk '{print $1}' /proc/loadavg)
             echo "Current node 1m load: $LOAD_1M"
             WAIT_SECONDS=0
-            while [ $(awk 'BEGIN {print ('"$LOAD_1M"' > 6.5)}') -eq 1 ] && [ $WAIT_SECONDS -lt 120 ]; do
+            while [ "$(awk 'BEGIN {print ('"$LOAD_1M"' > 6.5)}')" -eq 1 ] && [ "$WAIT_SECONDS" -lt 120 ]; do
               echo "Host load is high ($LOAD_1M). Queuing for capacity (waited ${WAIT_SECONDS}s)..."
               sleep 10
               WAIT_SECONDS=$((WAIT_SECONDS + 10))
