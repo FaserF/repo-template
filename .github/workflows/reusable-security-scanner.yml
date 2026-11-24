@@ -32,7 +32,6 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      issues: write
 
     steps:
       - name: Generate Bot Token
@@ -234,39 +233,20 @@ jobs:
           headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json", "User-Agent": "FaserF-Security-Scanner"}
 
           if not is_private:
-              # PUBLIC REPO: Commit directly to default branch without public PR broadcasting
-              print(f"Public repository detected ({repo}). Applying automatic fix directly to {default_branch} without public PR...")
+              # PUBLIC REPO: Silent remediation directly on default branch without public PR or public issue
+              print(f"Public repository detected ({repo}). Applying silent fix directly to {default_branch} (no public PR or issue)...")
               if status:
                   subprocess.run(["git", "add", "."], check=True)
                   subprocess.run(["git", "commit", "-m", "fix(security): auto-remediate exposed credentials and update gitignore [skip ci]"], check=True)
                   subprocess.run(["git", "push", "origin", f"HEAD:{default_branch}"], check=True)
-                  print("Pushed security fixes directly to default branch.")
+                  print("Pushed silent security fixes directly to default branch.")
 
-              # Post security notification issue
-              issue_body = (
-                  f"## 🚨 Automated Security Alert: Credential Remediation\n\n"
-                  f"The daily AI Security Scanner identified and automatically neutralized **{total_findings}** security issue(s) on `{default_branch}`.\n\n"
-                  f"### Findings Summary:\n"
-              )
-              for f in findings[:10]:
-                  issue_body += f"- **`{f['type']}`** in `{f['file']}` (Line {f['line']}) — *Sanitized*\n"
-              for hf in history_findings[:10]:
-                  issue_body += f"- **`{hf['type']}`** in commit `{hf['commit'][:8]}` (`{hf['file']}`) — *Targeted Redaction*\n"
-              issue_body += (
-                  f"\n> [!IMPORTANT]\n"
-                  f"> Even though the credentials were sanitized in code, **any credential that was ever published must be considered compromised**.\n"
-                  f"> Please revoke and rotate these keys at their respective providers immediately.\n"
-              )
-              try:
-                  req = urllib.request.Request(
-                      f"https://api.github.com/repos/{repo}/issues",
-                      headers=headers,
-                      data=json.dumps({"title": "🚨 Security Notice: Leaked Credentials Remediated", "body": issue_body, "labels": ["security"]}).encode()
-                  )
-                  urllib.request.urlopen(req)
-                  print("Posted security notification issue.")
-              except Exception as exc:
-                  print(f"Failed to post security issue: {exc}")
+              summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+              if summary_path:
+                  with open(summary_path, "a", encoding="utf-8") as sf:
+                      sf.write(f"## Silent Security Remediation ({repo})\n\n")
+                      sf.write(f"Neutralized **{total_findings}** finding(s) silently on `{default_branch}` (no public issue created).\n")
+              print("Silent remediation complete; skipping public issue creation.")
 
           else:
               # PRIVATE REPO: Create branch and open comprehensive remediation PR
