@@ -213,7 +213,7 @@ permissions:
 jobs:
   prepare:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ${{{{ (github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest' }}}}
     outputs:
       tag_name: ${{{{ steps.bump.outputs.tag_name }}}}
     steps:
