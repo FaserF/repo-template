@@ -46,6 +46,7 @@ def run_cmd(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None 
         encoding="utf-8",
         errors="replace",
         env=env,
+        check=False,
     )
     return res.returncode, res.stdout.strip(), res.stderr.strip()
 
@@ -189,13 +190,99 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Version bump level"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      draft:
+        description: "Create as draft release"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
 
 jobs:
+  prepare:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{{{ steps.bump.outputs.tag_name }}}}
+    steps:
+      - name: Generate Bot Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        continue-on-error: true
+        with:
+          app-id: ${{{{ secrets.BOT_APP_ID }}}}
+          private-key: ${{{{ secrets.BOT_PRIVATE_KEY }}}}
+
+      - name: Checkout Code
+        uses: actions/checkout@v7
+        with:
+          token: ${{{{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}}}
+          fetch-depth: 0
+
+      - name: Bump Version & Push Tag
+        id: bump
+        run: |
+          if [ -f .github/scripts/version_manager.py ]; then
+            NEW_VER=$(python3 .github/scripts/version_manager.py bump --type stable --level "${{{{ inputs.release_type }}}}")
+          else
+            NEW_VER=$(python3 - <<'PY'
+          import glob, json, os, re, subprocess
+          level = os.environ.get("RELEASE_TYPE", "patch")
+          tags = subprocess.check_output(["git", "tag", "--sort=-version:refname"], text=True).splitlines()
+          latest = next((t.lstrip("v") for t in tags if re.match(r"^v?\\d+\\.\\d+\\.\\d+$", t.strip())), "1.0.0")
+          maj, min_, pat = (int(x) for x in latest.split("."))
+          if level == "major":
+              maj, min_, pat = maj + 1, 0, 0
+          elif level == "minor":
+              min_, pat = min_ + 1, 0
+          else:
+              pat += 1
+          ver = f"{{maj}}.{{min_}}.{{pat}}"
+          for mf in glob.glob("custom_components/*/manifest.json"):
+              data = json.load(open(mf, encoding="utf-8"))
+              data["version"] = ver
+              with open(mf, "w", encoding="utf-8") as fh:
+                  json.dump(data, fh, indent=2)
+                  fh.write("\\n")
+          if os.path.exists("pyproject.toml"):
+              txt = open("pyproject.toml", encoding="utf-8").read()
+              txt = re.sub(r'^version\\s*=\\s*".*?"', f'version = "{{ver}}"', txt, count=1, flags=re.MULTILINE)
+              open("pyproject.toml", "w", encoding="utf-8").write(txt)
+          print(ver)
+          PY
+          )
+          fi
+          TAG="v${{NEW_VER}}"
+          git config user.name "{BOT_NAME}"
+          git config user.email "{BOT_EMAIL}"
+          git add custom_components/*/manifest.json pyproject.toml 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore(release): ${{TAG}} [skip ci]"
+          git tag -f "${{TAG}}"
+          git push origin "HEAD:${{{{ github.ref_name }}}}"
+          git push origin "${{TAG}}" --force
+          echo "tag_name=${{TAG}}" >> "$GITHUB_OUTPUT"
+        env:
+          RELEASE_TYPE: ${{{{ inputs.release_type }}}}
+
   release:
+    needs: prepare
+    if: always() && (github.event_name == 'push' || needs.prepare.result == 'success')
     uses: {TEMPLATE_REPO}/.github/workflows/reusable-release.yml@{TEMPLATE_VERSION}
+    with:
+      tag_name: ${{{{ github.event_name == 'workflow_dispatch' && needs.prepare.outputs.tag_name || github.ref_name }}}}
+      draft: ${{{{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}}}
     secrets: inherit
 """
 
@@ -260,6 +347,7 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
         workflows_dir = github_dir / "workflows"
         ci_yml = workflows_dir / "ci.yml"
         sec_yml = workflows_dir / "security-scanner.yml"
+        release_yml = workflows_dir / "release.yml"
         hermes_yml = github_dir / "hermes-repo.yml"
 
         has_obsolete = False
@@ -278,6 +366,8 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
             and hermes_yml.exists()
             and sec_yml.exists()
             and ci_yml.exists()
+            and release_yml.exists()
+            and "workflow_dispatch" in release_yml.read_text(encoding="utf-8", errors="ignore")
             and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}" in ci_yml.read_text(encoding="utf-8", errors="ignore")
         )
 
