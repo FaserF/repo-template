@@ -16,7 +16,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("fleet_template_sync")
@@ -332,11 +331,16 @@ permissions:
         if TEMPLATE_LOCAL_DIR.exists():
             for src_rel in [
                 "AGENTS.md",
+                "LICENSE",
+                "SECURITY.md",
+                ".gitignore",
                 ".gitattributes",
                 ".github/FUNDING.yml",
                 ".github/CODEOWNERS",
                 ".github/PULL_REQUEST_TEMPLATE.md",
+                ".github/changelog-config.json",
                 ".github/labeler.yml",
+                ".github/workflows/labeler.yml",
                 ".github/renovate.json",
                 ".github/ISSUE_TEMPLATE/bug_report.yml",
                 ".github/ISSUE_TEMPLATE/feature_request.yml",
@@ -345,13 +349,16 @@ permissions:
                 src_path = TEMPLATE_LOCAL_DIR / src_rel
                 dst_path = clone_path / src_rel
                 if src_path.exists():
-                    # Preserve existing custom renovate.json, issue templates, and repository-specific AGENTS.md
+                    # Preserve existing custom repository-specific files
                     if dst_path.exists() and src_rel in [
                         "AGENTS.md",
+                        "LICENSE",
+                        "SECURITY.md",
+                        ".gitignore",
                         ".github/renovate.json",
                         ".github/ISSUE_TEMPLATE/bug_report.yml",
                         ".github/ISSUE_TEMPLATE/feature_request.yml",
-                        ".github/ISSUE_TEMPLATE/config.yml"
+                        ".github/ISSUE_TEMPLATE/config.yml",
                     ]:
                         log.info("Preserving existing custom %s in %s", src_rel, repo_full_name)
                         continue
@@ -421,8 +428,8 @@ permissions:
                 sanitized = sanitize_no_personal_links(txt)
                 if sanitized != txt:
                     f.write_text(sanitized, encoding="utf-8")
-            except Exception:
-                pass
+            except OSError as err:
+                log.debug("Skipping YAML sanitization for %s: %s", f, err)
 
         # 6. Check Git Diff
         code, status_out, _ = run_cmd(["git", "status", "--porcelain"], cwd=clone_path)

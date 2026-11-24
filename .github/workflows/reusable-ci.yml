@@ -23,7 +23,7 @@ jobs:
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     steps:
       - name: Runner Pre-Flight & Queue Load Gate
-        if: runner.os == 'Linux' && (contains(runner.labels, 'self-hosted') || github.event.repository.private == true)
+        if: runner.os == 'Linux' && (runner.environment == 'self-hosted' || github.event.repository.private == true)
         run: |
           if [ -f /proc/loadavg ]; then
             LOAD_1M=$(awk '{print $1}' /proc/loadavg)
@@ -87,32 +87,51 @@ jobs:
           python3 -c "
           import json, glob
           for p in glob.glob('custom_components/*/manifest.json'):
-              try:
-                  with open(p, 'r', encoding='utf-8') as f:
-                      d = json.load(f)
-                  ordered = {}
-                  if 'domain' in d: ordered['domain'] = d.pop('domain')
-                  if 'name' in d: ordered['name'] = d.pop('name')
-                  for k in sorted(d.keys()):
-                      ordered[k] = d[k]
-                  with open(p, 'w', encoding='utf-8') as f:
-                      json.dump(ordered, f, indent=2)
-                      f.write('\n')
-              except Exception as e:
-                  print('Error normalizing', p, e)
+              with open(p, 'r', encoding='utf-8') as f:
+                  d = json.load(f)
+              ordered = {}
+              if 'domain' in d: ordered['domain'] = d.pop('domain')
+              if 'name' in d: ordered['name'] = d.pop('name')
+              for k in sorted(d.keys()):
+                  ordered[k] = d[k]
+              with open(p, 'w', encoding='utf-8') as f:
+                  json.dump(ordered, f, indent=2)
+                  f.write('\n')
+          "
+
+      - name: Validate JSON & YAML Syntax
+        if: steps.detect.outputs.is_ha == 'true' || steps.detect.outputs.is_python == 'true'
+        run: |
+          python3 -c "
+          import glob, json, sys
+          try:
+              import yaml
+          except ImportError:
+              yaml = None
+          for f in glob.glob('**/*.json', recursive=True):
+              if '.venv' in f or 'node_modules' in f:
+                  continue
+              with open(f, encoding='utf-8-sig') as fh:
+                  json.load(fh)
+          if yaml is not None:
+              yaml.add_multi_constructor('tag:yaml.org,2002:python/name:', lambda l, s, n: None, Loader=yaml.SafeLoader)
+              yaml.add_multi_constructor('!', lambda l, s, n: None, Loader=yaml.SafeLoader)
+              for f in glob.glob('**/*.yaml', recursive=True) + glob.glob('**/*.yml', recursive=True):
+                  if '.venv' in f or 'node_modules' in f:
+                      continue
+                  with open(f, encoding='utf-8-sig') as fh:
+                      yaml.safe_load(fh)
           "
 
       - name: Hassfest Validation
         if: steps.detect.outputs.is_ha == 'true'
         uses: home-assistant/actions/hassfest@master
-        continue-on-error: true
 
       - name: HACS Action Validation
         if: steps.detect.outputs.is_ha == 'true' && github.event.repository.private != true
         uses: hacs/action@main
         with:
           category: integration
-        continue-on-error: true
 
       # --- Python Setup & Pytest ---
       - name: Setup Python
@@ -132,16 +151,49 @@ jobs:
             INSTALLER="python -m pip install"
           fi
           if [ -f requirements_test.txt ]; then
-            $INSTALLER -r requirements_test.txt || true
+            $INSTALLER -r requirements_test.txt
           elif [ -f requirements.txt ]; then
-            $INSTALLER -r requirements.txt || true
+            $INSTALLER -r requirements.txt
           fi
-          $INSTALLER pytest pytest-asyncio pytest-homeassistant-custom-component ruff || true
+          $INSTALLER pytest pytest-asyncio pytest-timeout ruff
+          if [ "${{ steps.detect.outputs.is_ha }}" = "true" ]; then
+            $INSTALLER pytest-homeassistant-custom-component
+          fi
+
+      - name: Run Mypy Type Check
+        if: steps.detect.outputs.is_python == 'true'
+        run: |
+          if [ -f mypy.ini ] || ([ -f pyproject.toml ] && grep -q '\[tool\.mypy\]' pyproject.toml); then
+            if ! command -v mypy >/dev/null 2>&1; then
+              if command -v uv >/dev/null 2>&1; then
+                uv pip install --system mypy
+              else
+                python -m pip install mypy
+              fi
+            fi
+            if [ "${{ steps.detect.outputs.is_ha }}" = "true" ] && [ -d custom_components ]; then
+              mypy custom_components
+            else
+              mypy .
+            fi
+          fi
+
+      - name: Check Quality Scale
+        if: steps.detect.outputs.is_ha == 'true'
+        run: |
+          if [ -f script/check_quality_scale.py ]; then
+            if command -v uv >/dev/null 2>&1; then
+              uv pip install --system packaging pyyaml
+            else
+              python -m pip install packaging pyyaml
+            fi
+            python script/check_quality_scale.py
+          fi
 
       - name: Run Pytest Test Suite
         if: steps.detect.outputs.is_python == 'true' && hashFiles('tests/**') != ''
         run: |
-          pytest tests/ -v --timeout=60 || true
+          pytest tests/ -v --timeout=60
 
       # --- Go Setup & Tests ---
       - name: Setup Go

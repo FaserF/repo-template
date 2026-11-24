@@ -61,6 +61,40 @@ jobs:
           echo "Generated release body preview:"
           head -n 25 /tmp/gh_release_body.md
 
+      - name: Package HACS Zip Release
+        id: hacs-zip
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob
+          import json
+          import os
+          import zipfile
+          from pathlib import Path
+
+          files_out = ""
+          if Path("hacs.json").is_file():
+              hacs_cfg = json.loads(Path("hacs.json").read_text(encoding="utf-8"))
+              if hacs_cfg.get("zip_release"):
+                  manifests = glob.glob("custom_components/*/manifest.json")
+                  if manifests:
+                      manifest = json.loads(Path(manifests[0]).read_text(encoding="utf-8"))
+                      domain = manifest["domain"]
+                      zip_name = hacs_cfg.get("filename") or f"{domain}.zip"
+                      comp_dir = Path(manifests[0]).parent
+                      with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as zf:
+                          for p in sorted(comp_dir.rglob("*")):
+                              if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc":
+                                  zf.write(p, p.relative_to(comp_dir))
+                      files_out = zip_name
+                      print(f"Packaged HACS release archive: {zip_name}")
+
+          gh_out = os.environ.get("GITHUB_OUTPUT")
+          if gh_out:
+              with open(gh_out, "a", encoding="utf-8") as fh:
+                  fh.write(f"files={files_out}\n")
+          PY
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -68,6 +102,7 @@ jobs:
           tag_name: ${{ inputs.tag_name || github.ref_name }}
           name: ${{ inputs.tag_name || github.ref_name }}
           body_path: /tmp/gh_release_body.md
+          files: ${{ steps.hacs-zip.outputs.files }}
           draft: ${{ inputs.draft }}
 
       - name: Update Floating Major Version Tag
