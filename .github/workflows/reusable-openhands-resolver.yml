@@ -96,7 +96,7 @@ jobs:
           MODEL: ${{ inputs.model }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
-          cat << 'EOF' > run_resolver.py
+          cat << 'EOF' > /tmp/run_resolver.py
           import os, subprocess, sys
           from pathlib import Path
 
@@ -158,7 +158,7 @@ jobs:
                   "--base", default_branch
               ], check=False)
           EOF
-          python run_resolver.py
+          python /tmp/run_resolver.py
 
       - name: Cleanup Ready Label & Post Summary
         if: always()

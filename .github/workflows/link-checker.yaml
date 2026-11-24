@@ -1,0 +1,50 @@
+name: Link Checker
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "**/*.md"
+      - ".github/workflows/link-checker.yaml"
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - "**/*.md"
+  workflow_dispatch:
+
+jobs:
+  link-checker:
+    name: Link Checker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+
+      - name: Check HTML hrefs in Docs
+        run: |
+          python3 - << 'EOF'
+          import glob, re, sys
+          errors = []
+          for path in glob.glob("docs/**/*.md", recursive=True):
+              with open(path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              for match in re.finditer(r'href=["\']([^"\']+\.md)["\']', content):
+                  errors.append(f'{path}: HTML link "{match.group(1)}" points to .md file instead of .html')
+          if errors:
+              print("Found invalid HTML href links pointing to .md files in docs/:")
+              for err in errors:
+                  print("  - " + err)
+              sys.exit(1)
+          EOF
+
+      - name: Check Links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --verbose --no-progress "**/*.md"
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

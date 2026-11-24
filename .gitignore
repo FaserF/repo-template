@@ -21,6 +21,16 @@ ENV/
 node_modules/
 .eslintcache
 
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.dll
+*.pdb
+*.nupkg
+
 # Unit test / coverage / type-check caches
 htmlcov/
 .coverage

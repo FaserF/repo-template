@@ -50,6 +50,7 @@ jobs:
           IS_PYTHON="false"
           IS_GO="false"
           IS_NODE="false"
+          IS_DOTNET="false"
           IS_DOCKER="false"
 
           if [ -d "custom_components" ] || [ "$TYPE" = "ha-integration" ]; then
@@ -68,6 +69,9 @@ jobs:
           if [ -f "package.json" ] || [ "$TYPE" = "node" ]; then
             IS_NODE="true"
           fi
+          if ls ./*.sln >/dev/null 2>&1 || ls ./*/*.csproj >/dev/null 2>&1 || ls ./*.csproj >/dev/null 2>&1 || [ "$TYPE" = "dotnet" ]; then
+            IS_DOTNET="true"
+          fi
           if [ -f "Dockerfile" ] || [ -f "compose.yaml" ] || [ -f "docker-compose.yml" ]; then
             IS_DOCKER="true"
           fi
@@ -78,9 +82,10 @@ jobs:
             echo "is_python=$IS_PYTHON"
             echo "is_go=$IS_GO"
             echo "is_node=$IS_NODE"
+            echo "is_dotnet=$IS_DOTNET"
             echo "is_docker=$IS_DOCKER"
           } >> "$GITHUB_OUTPUT"
-          echo "Summary: HA=$IS_HA, Addon=$IS_ADDON, Python=$IS_PYTHON, Go=$IS_GO, Node=$IS_NODE, Docker=$IS_DOCKER"
+          echo "Summary: HA=$IS_HA, Addon=$IS_ADDON, Python=$IS_PYTHON, Go=$IS_GO, Node=$IS_NODE, Dotnet=$IS_DOTNET, Docker=$IS_DOCKER"
 
       # --- Home Assistant Integration Tests ---
       - name: Normalize Manifest Keys Order
@@ -224,6 +229,20 @@ jobs:
         run: |
           npm ci || npm install
           npm test --if-present
+
+      # --- .NET Setup & Tests ---
+      - name: Setup .NET
+        if: steps.detect.outputs.is_dotnet == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Run .NET Build & Tests
+        if: steps.detect.outputs.is_dotnet == 'true'
+        run: |
+          dotnet restore
+          dotnet build -c Release --no-restore
+          dotnet test -c Release --no-build
 
   auto-merge:
     name: Auto Merge Dependency Updates
