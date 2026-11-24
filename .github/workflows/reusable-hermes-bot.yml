@@ -99,7 +99,6 @@ jobs:
             }
 
             // 1. Dynamic RBAC: Determine caller permissions strictly per repository via .github/hermes-repo.yml and GitHub API
-            const sender = (payload.sender ? payload.sender.login : (payload.comment ? payload.comment.user.login : "")).toLowerCase();
             const association = (payload.comment ? payload.comment.author_association : "") || "";
             const repoOwner = context.repo.owner.toLowerCase();
 

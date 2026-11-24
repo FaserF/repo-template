@@ -40,6 +40,9 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       - name: Analyze Issue & Post Pre-filled Checklist
+        env:
+          OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_OPENHANDS_API_KEY || secrets.OMNIROUTE_API_KEY }}
+          OMNIROUTE_BASE_URL: ${{ secrets.OMNIROUTE_BASE_URL }}
         uses: actions/github-script@v9
         with:
           github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
@@ -127,6 +130,52 @@ jobs:
               triageBody += `💡 **Feature Proposal Received:** Thank you for helping shape future releases! Queued for review.\n\n`;
             }
 
+            // Optional AI Initial Analysis & Follow-up Questions via OmniRoute
+            let aiAnalysis = "";
+            const omniUrl = (process.env.OMNIROUTE_BASE_URL || "").replace(/\/+$/, "");
+            const omniKey = process.env.OMNIROUTE_API_KEY || "";
+            if (omniUrl && omniKey) {
+              try {
+                const prompt = [
+                  `Repository: ${context.repo.owner}/${context.repo.repo}`,
+                  `Issue #${issue.number}: ${issueTitle}`,
+                  `Labels: ${labels.join(", ") || "none"}`,
+                  `Body:\n${issueBody.slice(0, 3500)}`,
+                  "",
+                  "Provide a concise initial triage response in English (max 6 bullet points):",
+                  "1. Likely root cause or area of the codebase to check (only if clear from the report; never invent symbol names).",
+                  "2. 1-3 targeted follow-up questions if information is missing, or next steps if diagnostics are complete."
+                ].join("\n");
+                const ctrl = new AbortController();
+                const timer = setTimeout(() => ctrl.abort(), 15000);
+                const resp = await fetch(`${omniUrl}/chat/completions`, {
+                  method: "POST",
+                  headers: {
+                    "Authorization": `Bearer ${omniKey}`,
+                    "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({
+                    model: "auto/smart",
+                    messages: [{ role: "user", content: prompt }],
+                    max_tokens: 450,
+                    temperature: 0.2
+                  }),
+                  signal: ctrl.signal
+                });
+                clearTimeout(timer);
+                if (resp.ok) {
+                  const data = await resp.json();
+                  const content = data?.choices?.[0]?.message?.content?.trim();
+                  if (content) {
+                    aiAnalysis = `### 🤖 Initial AI Analysis & Follow-up Questions\n${content}\n\n`;
+                  }
+                }
+              } catch (err) {
+                console.log(`AI triage note (non-fatal): ${err.message}`);
+              }
+            }
+
+            triageBody += aiAnalysis;
             triageBody += `---\n`;
             triageBody += `### ⚡ Quick Actions & Interactive Controls\n`;
             triageBody += `- [ ] 🛠️ Resolve with OpenHands (\`@faserf-hermes-agent resolve\`)\n`;
