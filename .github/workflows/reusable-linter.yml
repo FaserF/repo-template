@@ -33,8 +33,10 @@ jobs:
           if [ -f "package.json" ] || [ -f "apps/gamakay-ui/package.json" ]; then
             has_node="true"
           fi
-          echo "has_python=$has_py" >> $GITHUB_OUTPUT
-          echo "has_node=$has_node" >> $GITHUB_OUTPUT
+          {
+            echo "has_python=$has_py"
+            echo "has_node=$has_node"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Ruff Linter & Formatter (Python)
         if: steps.detect.outputs.has_python == 'true'

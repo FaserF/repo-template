@@ -59,7 +59,7 @@ jobs:
           if [ -f "build.yaml" ] || [ -f "config.yaml" ] && [ -d "addon" ] || [ "$TYPE" = "ha-addon" ]; then
             IS_ADDON="true"
           fi
-          if [ -f "pyproject.toml" ] || [ -f "setup.py" ] || [ -f "requirements.txt" ] || [ -f "requirements_test.txt" ] || ls *.py >/dev/null 2>&1 || [ "$TYPE" = "python" ]; then
+          if [ -f "pyproject.toml" ] || [ -f "setup.py" ] || [ -f "requirements.txt" ] || [ -f "requirements_test.txt" ] || ls ./*.py >/dev/null 2>&1 || [ "$TYPE" = "python" ]; then
             IS_PYTHON="true"
           fi
           if [ -f "go.mod" ] || [ "$TYPE" = "go" ]; then
@@ -72,12 +72,14 @@ jobs:
             IS_DOCKER="true"
           fi
 
-          echo "is_ha=$IS_HA" >> $GITHUB_OUTPUT
-          echo "is_addon=$IS_ADDON" >> $GITHUB_OUTPUT
-          echo "is_python=$IS_PYTHON" >> $GITHUB_OUTPUT
-          echo "is_go=$IS_GO" >> $GITHUB_OUTPUT
-          echo "is_node=$IS_NODE" >> $GITHUB_OUTPUT
-          echo "is_docker=$IS_DOCKER" >> $GITHUB_OUTPUT
+          {
+            echo "is_ha=$IS_HA"
+            echo "is_addon=$IS_ADDON"
+            echo "is_python=$IS_PYTHON"
+            echo "is_go=$IS_GO"
+            echo "is_node=$IS_NODE"
+            echo "is_docker=$IS_DOCKER"
+          } >> "$GITHUB_OUTPUT"
           echo "Summary: HA=$IS_HA, Addon=$IS_ADDON, Python=$IS_PYTHON, Go=$IS_GO, Node=$IS_NODE, Docker=$IS_DOCKER"
 
       # --- Home Assistant Integration Tests ---

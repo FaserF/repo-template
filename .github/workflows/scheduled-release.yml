@@ -62,7 +62,7 @@ jobs:
           echo "Total new commits since $LATEST_TAG: $TOTAL_COMMITS"
           
           if [ "$TOTAL_COMMITS" -eq 0 ]; then
-            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
             echo "No new commits since $LATEST_TAG. Skipping release."
             exit 0
           fi
@@ -70,7 +70,7 @@ jobs:
           HAS_NON_BOT=false
           HAS_DEPS_UPDATE=false
           
-          while IFS='|' read -r hash author email subject; do
+          while IFS='|' read -r hash author _ subject; do
             [ -z "$hash" ] && continue
             echo "Evaluating commit: $hash ($author) -> $subject"
             
