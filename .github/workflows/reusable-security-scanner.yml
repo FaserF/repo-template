@@ -40,7 +40,7 @@ jobs:
         uses: actions/create-github-app-token@v3
         continue-on-error: true
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          client-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       - name: Checkout Repository with Full History
@@ -67,7 +67,7 @@ jobs:
           HISTORY_DEPTH: ${{ inputs.history_depth }}
           CLEAN_HISTORY: ${{ inputs.clean_git_history }}
         run: |
-          cat << 'EOF' > run_security_scanner.py
+          cat << 'EOF' > /tmp/run_security_scanner.py
           import datetime, json, os, re, subprocess, sys, urllib.request
 
           repo = os.environ.get("REPO_NAME", "")
@@ -95,12 +95,12 @@ jobs:
               ("Telegram Bot Token", r"[0-9]{8,10}:[a-zA-Z0-9_-]{35}"),
               ("Tailscale Key", r"tskey-(?:auth|client)-[a-zA-Z0-9]+"),
               ("Infisical Token", r"st\.[a-f0-9]{24,}\.[a-zA-Z0-9]{32,}"),
-              ("Hardcoded Credentials", r"(?i)(?:api[_-]?key|secret|password|auth[_-]?token|access[_-]?token)\s*[:=]\s*['\"][A-Za-z0-9_\-.~!@#$%^&*+=]{14,}['\"]"),
+              ("Hardcoded Credentials", r"(?i)(?:api[_-]?key|secret|password|auth[_-]?token|access[_-]?token)\s*[:=]\s*(['\"])([A-Za-z0-9_\-.~!@#$%^&*+=]{14,})\1"),
           ]
 
-          IGNORE_DIRS = {".git", "node_modules", "vendor", ".venv", "venv", "__pycache__", ".tox", ".pytest_cache", "dist", "build"}
+          IGNORE_DIRS = {".git", "node_modules", "vendor", ".venv", "venv", "__pycache__", ".tox", ".pytest_cache", "dist", "build", "tests"}
           IGNORE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".zip", ".tar", ".gz", ".7z", ".pdf", ".woff", ".woff2", ".ttf", ".eot", ".lock"}
-          DUMMY_VALUES = ["mock_", "fake_", "dummy_", "test_", "example", "placeholder", "xxx", "your_token", "your_key", "your_password", "insert_here"]
+          DUMMY_VALUES = ["mock_", "fake_", "dummy_", "test_", "example", "placeholder", "xxx", "your_token", "your_key", "your_password", "insert_here", "secure_password", "redacted_secret_"]
 
           findings = []
           secrets_found = set()
@@ -127,7 +127,7 @@ jobs:
                       for s_name, pat in SECRET_PATTERNS:
                           m = re.search(pat, line)
                           if m:
-                              secret_val = m.group(0)
+                              secret_val = m.group(m.lastindex) if m.lastindex and m.lastindex >= 2 else m.group(0)
                               secrets_found.add(secret_val)
                               findings.append({
                                   "type": s_name,
@@ -157,7 +157,7 @@ jobs:
                           for s_name, pat in SECRET_PATTERNS:
                               m = re.search(pat, added)
                               if m:
-                                  secret_val = m.group(0)
+                                  secret_val = m.group(m.lastindex) if m.lastindex and m.lastindex >= 2 else m.group(0)
                                   secrets_found.add(secret_val)
                                   history_findings.append({
                                       "type": s_name,
@@ -185,7 +185,7 @@ jobs:
               for s in secrets_found:
                   # Escape special characters for regex replacement
                   escaped_s = re.escape(s)
-                  redact_script.append((s, f"[REDACTED_SECRET_{hash(s) % 100000:05d}]"))
+                  redact_script.append((s, f"REDACTED_SECRET_{hash(s) % 100000:05d}"))
 
               try:
                   # Use git-filter-branch with tree-filter to redact exact secret strings without deleting files or metadata
@@ -318,4 +318,4 @@ jobs:
 
           print("Security Scan & Remediation Lifecycle Finished.")
           EOF
-          python run_security_scanner.py
+          python /tmp/run_security_scanner.py

@@ -11,6 +11,10 @@ on:
         description: "Create as draft release"
         type: boolean
         default: false
+      floating_major_tag:
+        description: "Update floating major version tag (e.g. v1) - enable for GitHub Actions, disable for HA integrations"
+        type: boolean
+        default: false
       runner:
         description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
         type: string
@@ -29,7 +33,7 @@ jobs:
         uses: actions/create-github-app-token@v3
         continue-on-error: true
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          client-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       - name: Checkout Code
@@ -106,6 +110,7 @@ jobs:
           draft: ${{ inputs.draft }}
 
       - name: Update Floating Major Version Tag
+        if: inputs.floating_major_tag == true
         shell: bash
         run: |
           TAG="${{ inputs.tag_name || github.ref_name }}"

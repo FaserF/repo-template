@@ -19,4 +19,5 @@ jobs:
     uses: ./.github/workflows/reusable-release.yml
     with:
       tag_name: ${{ inputs.tag_name }}
+      floating_major_tag: true
     secrets: inherit

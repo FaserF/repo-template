@@ -113,8 +113,9 @@ jobs:
           for f in glob.glob('**/*.json', recursive=True):
               if '.venv' in f or 'node_modules' in f:
                   continue
-              with open(f, encoding='utf-8-sig') as fh:
-                  json.load(fh)
+              raw = open(f, 'rb').read()
+              enc = 'utf-16' if raw.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig'
+              json.loads(raw.decode(enc))
           if yaml is not None:
               yaml.add_multi_constructor('tag:yaml.org,2002:python/name:', lambda l, s, n: None, Loader=yaml.SafeLoader)
               yaml.add_multi_constructor('!', lambda l, s, n: None, Loader=yaml.SafeLoader)
@@ -195,7 +196,7 @@ jobs:
       - name: Run Pytest Test Suite
         if: steps.detect.outputs.is_python == 'true' && hashFiles('tests/**') != ''
         run: |
-          pytest tests/ -v --timeout=60
+          PYTHONPATH=. python -m pytest tests/ -v --timeout=60
 
       # --- Go Setup & Tests ---
       - name: Setup Go
@@ -248,7 +249,7 @@ jobs:
         uses: actions/create-github-app-token@v3
         continue-on-error: true
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          client-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       - name: Checkout Code

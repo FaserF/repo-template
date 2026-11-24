@@ -366,9 +366,12 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
             and hermes_yml.exists()
             and sec_yml.exists()
             and ci_yml.exists()
+            and (workflows_dir / "linter.yml").exists()
+            and (workflows_dir / "pr-reviewer.yml").exists()
             and release_yml.exists()
             and "workflow_dispatch" in release_yml.read_text(encoding="utf-8", errors="ignore")
             and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}" in ci_yml.read_text(encoding="utf-8", errors="ignore")
+            and f"{TEMPLATE_REPO}/.github/workflows/reusable-security-scanner.yml@{TEMPLATE_VERSION}" in sec_yml.read_text(encoding="utf-8", errors="ignore")
         )
 
         if already_synced:
@@ -439,7 +442,10 @@ permissions:
                 src_path = TEMPLATE_LOCAL_DIR / src_rel
                 dst_path = clone_path / src_rel
                 if src_path.exists():
-                    # Preserve existing custom repository-specific files
+                    # Preserve existing custom repository-specific files (and avoid duplicate root renovate.json)
+                    if src_rel == ".github/renovate.json" and (clone_path / "renovate.json").exists():
+                        log.info("Preserving root renovate.json in %s", repo_full_name)
+                        continue
                     if dst_path.exists() and src_rel in [
                         "AGENTS.md",
                         "LICENSE",
@@ -489,25 +495,38 @@ permissions:
                 log.info("Removing obsolete pre-template workflow %s in %s", obsolete, repo_full_name)
                 obs_path.unlink()
 
-        # 5. Generate caller workflows (preserving specialized CI if already present)
-        has_custom_ci = False
-        if repo_type != "ha-integration":
-            for candidate in ["test.yml", "tests.yml", "build.yml", "pipeline.yml"]:
-                c_path = workflows_dir / candidate
-                if c_path.exists() and TEMPLATE_REPO not in c_path.read_text(encoding="utf-8", errors="ignore"):
-                    has_custom_ci = True
-                    break
-
-        if not has_custom_ci:
-            (workflows_dir / "ci.yml").write_text(get_caller_workflow_ci(repo_type), encoding="utf-8")
+        # 5. Generate caller workflows (preserving specialized CI/release for addons & CalVer repos)
+        if repo_type == "ha-addon":
+            log.info("Preserving specialized addon orchestrator CI/release in %s", repo_full_name)
         else:
-            log.info("Preserving repository's specialized CI pipeline in %s", repo_full_name)
+            has_custom_ci = False
+            if repo_type != "ha-integration":
+                for candidate in ["test.yml", "tests.yml", "build.yml", "pipeline.yml"]:
+                    c_path = workflows_dir / candidate
+                    if c_path.exists() and TEMPLATE_REPO not in c_path.read_text(encoding="utf-8", errors="ignore"):
+                        has_custom_ci = True
+                        break
+
+            if not has_custom_ci:
+                (workflows_dir / "ci.yml").write_text(get_caller_workflow_ci(repo_type), encoding="utf-8")
+            else:
+                log.info("Preserving repository's specialized CI pipeline in %s", repo_full_name)
+
+            # Preserve CalVer release workflows (e.g. v2026.x) that rely on custom version_manager.py
+            is_calver = (github_dir / "scripts" / "version_manager.py").exists() and (
+                "beta" in (workflows_dir / "release.yml").read_text(encoding="utf-8", errors="ignore")
+                if (workflows_dir / "release.yml").exists()
+                else False
+            )
+            if is_calver:
+                log.info("Preserving CalVer release.yml in %s", repo_full_name)
+            else:
+                (workflows_dir / "release.yml").write_text(get_caller_workflow_release(), encoding="utf-8")
 
         (workflows_dir / "linter.yml").write_text(get_caller_workflow_linter(), encoding="utf-8")
         (workflows_dir / "issue-triage.yml").write_text(get_caller_workflow_issue_triage(), encoding="utf-8")
         (workflows_dir / "hermes-bot.yml").write_text(get_caller_workflow_bot(), encoding="utf-8")
         (workflows_dir / "openhands-resolver.yml").write_text(get_caller_workflow_openhands(), encoding="utf-8")
-        (workflows_dir / "release.yml").write_text(get_caller_workflow_release(), encoding="utf-8")
         (workflows_dir / "pr-reviewer.yml").write_text(get_caller_workflow_pr_reviewer(), encoding="utf-8")
         (workflows_dir / "security-scanner.yml").write_text(get_caller_workflow_security_scanner(), encoding="utf-8")
 
