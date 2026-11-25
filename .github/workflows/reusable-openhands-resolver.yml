@@ -145,15 +145,19 @@ jobs:
             const targetNum = parseInt("${{ steps.target.outputs.number }}", 10);
             const isPR = "${{ steps.target.outputs.is_pr }}" === "true";
             const targetType = isPR ? "Pull Request" : "Issue";
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: targetNum,
-              body: `> [!TIP]\n` +
-                `> 🛠️ **OpenHands Autonomous Solver Started (${targetType} #${targetNum})**  \n` +
-                `> **Engine:** \`${{ inputs.model }}\` via OmniRoute  \n` +
-                `> Inspecting logs/review comments, applying test-verified fixes, and validating checks.`
-            });
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: targetNum,
+                body: `> [!TIP]\n` +
+                  `> 🛠️ **OpenHands Autonomous Solver Started (${targetType} #${targetNum})**  \n` +
+                  `> **Engine:** \`${{ inputs.model }}\` via OmniRoute  \n` +
+                  `> Inspecting logs/review comments, applying test-verified fixes, and validating checks.`
+              });
+            } catch (err) {
+              console.warn(`Non-fatal acknowledge comment failure: ${err.message}`);
+            }
 
       - name: Setup Python
         if: steps.target.outputs.number != '0'
@@ -210,9 +214,13 @@ jobs:
             const badge = status === "resolved" ? "✅ **OpenHands Autonomous Resolution Complete**" :
                           status === "no_changes" ? "ℹ️ **OpenHands Inspection Complete (No Changes Needed)**" :
                           "⚠️ **OpenHands Autonomous Solver Blocked / Incomplete**";
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: targetNum,
-              body: `> [!NOTE]\n> ${badge}  \n> ${summary}`
-            });
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: targetNum,
+                body: `> [!NOTE]\n> ${badge}  \n> ${summary}`
+              });
+            } catch (err) {
+              console.warn(`Non-fatal summary comment failure: ${err.message}`);
+            }
