@@ -454,7 +454,7 @@ def main() -> int:
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     number = int(os.environ.get("TARGET_NUMBER", "0") or 0)
     title = os.environ.get("TARGET_TITLE", "")
-    body = os.environ.get("TARGET_BODY", "")
+    body = os.environ.get("TARGET_BODY") or os.environ.get("TARGET_BODY_FULL") or ""
     head_ref = os.environ.get("HEAD_REF", "")
     base_ref = os.environ.get("BASE_REF", "main")
     default_branch = os.environ.get("DEFAULT_BRANCH", "main")

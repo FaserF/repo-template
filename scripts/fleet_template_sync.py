@@ -349,6 +349,11 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
             and openhands_yml.exists()
             and "workflow_run:"
             in openhands_yml.read_text(encoding="utf-8", errors="ignore")
+            and "actions: read"
+            in openhands_yml.read_text(encoding="utf-8", errors="ignore")
+            and (workflows_dir / "labeler.yml").exists()
+            and "create-github-app-token"
+            in (workflows_dir / "labeler.yml").read_text(encoding="utf-8", errors="ignore")
             and (workflows_dir / "linter.yml").exists()
             and (workflows_dir / "pr-reviewer.yml").exists()
             and release_yml.exists()

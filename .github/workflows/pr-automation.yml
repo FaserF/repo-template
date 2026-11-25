@@ -19,9 +19,18 @@ jobs:
     timeout-minutes: 10
     if: github.event.pull_request.head.repo.fork == false && github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]' && !endsWith(github.actor, '[bot]')
     steps:
+      - name: Generate Bot Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        continue-on-error: true
+        with:
+          client-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
       - name: Checkout Code
         uses: actions/checkout@v7
         with:
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           ref: ${{ github.head_ref }}
           fetch-depth: 1
 
@@ -33,5 +42,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "style: fix line endings in shell scripts [skip ci]"
+          commit_user_name: "faserf-hermes-agent[bot]"
+          commit_user_email: "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
           branch: ${{ github.head_ref }}
           file_pattern: "*.sh"

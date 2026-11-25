@@ -168,7 +168,6 @@ jobs:
           IS_PR: ${{ steps.target.outputs.is_pr }}
           TARGET_NUMBER: ${{ steps.target.outputs.number }}
           TARGET_TITLE: ${{ steps.target.outputs.title }}
-          TARGET_BODY: ${{ env.TARGET_BODY_FULL }}
           HEAD_REF: ${{ steps.target.outputs.head_ref }}
           BASE_REF: ${{ steps.target.outputs.base_ref }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
@@ -189,12 +188,16 @@ jobs:
       - name: Cleanup Ready Label & Post Summary
         if: always() && steps.target.outputs.number != '0'
         uses: actions/github-script@v9
+        env:
+          TARGET_NUM: ${{ steps.target.outputs.number }}
+          RESOLVER_STATUS: ${{ steps.solver.outputs.resolver_status || 'blocked' }}
+          RESOLVER_SUMMARY: ${{ steps.solver.outputs.resolver_summary || 'See workflow logs for details.' }}
         with:
           github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           script: |
-            const targetNum = parseInt("${{ steps.target.outputs.number }}", 10);
-            const status = "${{ steps.solver.outputs.resolver_status || 'blocked' }}";
-            const summary = `${{ steps.solver.outputs.resolver_summary || 'See workflow logs for details.' }}`;
+            const targetNum = parseInt(process.env.TARGET_NUM || "0", 10);
+            const status = process.env.RESOLVER_STATUS || "blocked";
+            const summary = process.env.RESOLVER_SUMMARY || "See workflow logs for details.";
             try {
               await github.rest.issues.removeLabel({
                 owner: context.repo.owner,

@@ -79,8 +79,13 @@ jobs:
               sys.exit(0)
 
           if not omniroute_key:
-              print("No OMNIROUTE_API_KEY available (e.g. external fork). Exiting cleanly.")
+              if os.environ.get("IS_FORK", "false").lower() == "true":
+                  print("No OMNIROUTE_API_KEY available on external fork PR. Exiting cleanly.")
+              else:
+                  print("::warning::OMNIROUTE_OPENHANDS_API_KEY / OMNIROUTE_API_KEY is missing in repository secrets; skipping AI PR review.")
               sys.exit(0)
+          if not os.environ.get("OMNIROUTE_BASE_URL"):
+              print("::warning::OMNIROUTE_BASE_URL is not set in repository secrets.")
 
           headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json", "User-Agent": "FaserF-Hermes-Reviewer"}
           owner, name = repo.split("/")
@@ -440,6 +445,7 @@ jobs:
       - name: Execute PR Review
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           BOT_TOKEN: ${{ steps.app-token.outputs.token }}
           OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_OPENHANDS_API_KEY || secrets.OMNIROUTE_API_KEY }}
           OMNIROUTE_BASE_URL: ${{ inputs.omniroute_base_url != '' && inputs.omniroute_base_url || secrets.OMNIROUTE_BASE_URL }}

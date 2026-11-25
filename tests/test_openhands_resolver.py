@@ -40,6 +40,29 @@ class OpenHandsResolverTests(unittest.TestCase):
                 self.assertEqual(resolver.main(), 1)
             self.assertIn("resolver_status=blocked", out.read_text(encoding="utf-8"))
 
+    def test_main_reads_target_body_full_when_target_body_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "gh_output.txt"
+            env_updates = {
+                "TARGET_NUMBER": "7",
+                "TARGET_BODY": "",
+                "TARGET_BODY_FULL": "Full body context",
+                "OMNIROUTE_API_KEY": "test-key",
+                "OMNIROUTE_BASE_URL": "https://omni.example/v1",
+                "GITHUB_OUTPUT": str(out),
+            }
+            with (
+                patch.dict(os.environ, env_updates, clear=False),
+                patch.object(resolver, "count_recent_auto_commits", return_value=0),
+                patch.object(resolver, "run_cmd", return_value=(0, "", "")),
+                patch.object(resolver, "build_context_prompt", return_value=("prompt", [])) as build_mock,
+                patch.object(resolver, "run_agent_loop", return_value=("no_changes", "Done")),
+                patch.object(resolver, "has_unresolved_conflicts", return_value=False),
+                patch.object(resolver, "has_git_changes", return_value=False),
+            ):
+                self.assertEqual(resolver.main(), 0)
+            self.assertEqual(build_mock.call_args.args[5], "Full body context")
+
     def test_run_agent_loop_handles_edit_and_finish(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
