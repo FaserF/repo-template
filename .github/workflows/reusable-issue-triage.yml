@@ -100,9 +100,17 @@ jobs:
             const checkSteps = hasSteps ? `[x] **Reproduction Steps:** Included` : `[ ] **Reproduction Steps:** Incomplete or missing`;
             const checkBeta = isBeta ? `[x] **Release Channel:** Pre-release / Beta channel` : `[x] **Release Channel:** Stable channel`;
 
+            const usedAppToken = Boolean("${{ steps.app-token.outputs.token }}");
+            if (!usedAppToken) {
+              console.log("::warning::BOT_APP_ID / BOT_PRIVATE_KEY unavailable (check 'secrets: inherit' in caller workflow). Falling back to github-actions[bot].");
+            }
+            const agentBanner = usedAppToken
+              ? "[faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)"
+              : "`github-actions[bot]` (App token unavailable — check `secrets: inherit`)";
+
             let triageBody = `> [!NOTE]\n`;
             triageBody += `> 🤖 **Automated Issue Triage & Diagnostics**  \n`;
-            triageBody += `> **Agent:** [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent) on behalf of repository maintainer @FaserF  \n`;
+            triageBody += `> **Agent:** ${agentBanner} on behalf of repository maintainer @FaserF  \n`;
             triageBody += `> *Automated analysis to assist maintainers with triage and reproduction.*  \n\n`;
 
             triageBody += `Hi @${issue.user.login}, thanks for opening this issue! 👋\n\n`;
@@ -202,7 +210,6 @@ jobs:
 
             // If GITHUB_TOKEN was used (BOT_APP_ID unavailable), trigger workflow_dispatch directly
             // because GitHub Actions suppresses labeled events emitted by GITHUB_TOKEN.
-            const usedAppToken = Boolean("${{ steps.app-token.outputs.token }}");
             if (!usedAppToken && labelsToAdd.includes("openhands:ready")) {
               try {
                 await github.rest.actions.createWorkflowDispatch({
