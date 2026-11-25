@@ -7,9 +7,48 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag (e.g. v1.0.0)"
-        required: true
-        default: "v1.0.0"
+        description: "Optional explicit release tag (e.g. v1.0.23, or target tag for re-release)"
+        required: false
+        default: ""
+        type: string
+      channel:
+        description: "Release channel (stable, beta, nightly)"
+        required: false
+        default: "stable"
+        type: choice
+        options:
+          - stable
+          - beta
+          - nightly
+      bump_level:
+        description: "SemVer increment level (patch, minor, major)"
+        required: false
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      version_override:
+        description: "Force explicit version (e.g. 1.2.3; overrides auto bump)"
+        required: false
+        default: ""
+        type: string
+      re_release:
+        description: "Re-release / update existing tag & release without bumping version"
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: "Create as draft release"
+        required: false
+        default: false
+        type: boolean
+      custom_message:
+        description: "Optional highlight note prepended to release notes"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: write
@@ -18,6 +57,12 @@ jobs:
   release:
     uses: ./.github/workflows/reusable-release.yml
     with:
-      tag_name: ${{ inputs.tag_name }}
+      tag_name: ${{ github.event_name == 'push' && github.ref_name || inputs.tag_name }}
+      channel: ${{ inputs.channel || 'stable' }}
+      bump_level: ${{ inputs.bump_level || 'patch' }}
+      version_override: ${{ inputs.version_override || '' }}
+      re_release: ${{ inputs.re_release || false }}
+      draft: ${{ inputs.draft || false }}
+      custom_message: ${{ inputs.custom_message || '' }}
       floating_major_tag: true
     secrets: inherit

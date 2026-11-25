@@ -1,9 +1,11 @@
-name: Maintenance
+name: Maintenance & Artifact Cleanup
 
 on:
-  workflow_dispatch:
+  pull_request:
+    types: [closed]
   schedule:
     - cron: "0 2 * * 0"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,7 +17,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  cleanup-merged-pr:
+    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    name: Cleanup Merged PR Workflow Artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Prune Superseded PR Runs & Artifacts
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const headSha = context.payload.pull_request.head.sha;
+            const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              event: "pull_request",
+              status: "completed",
+              per_page: 100
+            });
+            const prRuns = data.workflow_runs
+              .filter(r => r.head_sha === headSha || (r.pull_requests || []).some(p => p.number === prNumber))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            if (prRuns.length && ["failure", "cancelled"].includes(prRuns[0].conclusion)) {
+              prRuns.shift();
+            }
+            for (const run of prRuns) {
+              try {
+                const { data: arts } = await github.rest.actions.listWorkflowRunArtifacts({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: run.id
+                });
+                for (const art of arts.artifacts) {
+                  await github.rest.actions.deleteArtifact({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    artifact_id: art.id
+                  });
+                }
+              } catch (e) {}
+            }
+
   maintenance:
+    if: github.event_name != 'pull_request'
     name: System Maintenance
     runs-on: ubuntu-latest
     timeout-minutes: 15

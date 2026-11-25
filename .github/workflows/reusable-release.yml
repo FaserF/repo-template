@@ -4,19 +4,47 @@ on:
   workflow_call:
     inputs:
       tag_name:
-        description: "Release tag name (e.g. v1.2.0)"
+        description: "Explicit tag name (for v* tag pushes or re_release target)"
         type: string
-        required: false
+        default: ""
+      channel:
+        description: "Release channel (stable, beta, nightly)"
+        type: string
+        default: "stable"
+      bump_level:
+        description: "SemVer bump increment (patch, minor, major)"
+        type: string
+        default: "patch"
       release_type:
-        description: "Optional version bump level for workflow_dispatch (patch, minor, major)"
+        description: "Legacy alias for bump_level or channel"
+        type: string
+        default: ""
+      version_override:
+        description: "Force explicit target version (e.g. 1.2.3 or 2026.11.0b1)"
+        type: string
+        default: ""
+      re_release:
+        description: "Re-release / update existing tag & GitHub release without bumping version"
+        type: boolean
+        default: false
+      custom_message:
+        description: "Optional highlight message prepended to release notes"
         type: string
         default: ""
       draft:
         description: "Create as draft release"
         type: boolean
         default: false
+      prerelease:
+        description: "Prerelease flag override (auto, true, false)"
+        type: string
+        default: "auto"
       floating_major_tag:
-        description: "Update floating major version tag (e.g. v1) - enable for GitHub Actions, disable for HA integrations"
+        description: "Update floating major version tag (e.g. v1) on stable releases"
+        type: boolean
+        default: false
+      post_dev_bump:
+        description: "Bump repository version to next -dev0 after stable release"
         type: boolean
         default: false
       runner:
@@ -27,7 +55,7 @@ on:
 jobs:
   release:
     name: Create GitHub Release
-    timeout-minutes: 10
+    timeout-minutes: 15
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       contents: write
@@ -51,84 +79,67 @@ jobs:
         with:
           python-version: "3.15"
 
-      - name: Bump Version & Push Tag (Centralized)
-        id: bump
-        if: inputs.release_type != ''
-        env:
-          RELEASE_TYPE: ${{ inputs.release_type }}
-          REF_NAME: ${{ github.ref_name }}
-        run: |
-          if [ -f .github/scripts/version_manager.py ]; then
-            NEW_VER=$(python3 .github/scripts/version_manager.py bump --type stable --level "$RELEASE_TYPE")
-          else
-            NEW_VER=$(python3 - <<'PY'
-          import glob, json, os, re, subprocess
-          from pathlib import Path
-          level = os.environ.get("RELEASE_TYPE", "patch")
-          tags = subprocess.check_output(["git", "tag", "--sort=-version:refname"], text=True).splitlines()
-          latest = next((t.lstrip("v") for t in tags if re.match(r"^v?\d+\.\d+\.\d+$", t.strip())), "1.0.0")
-          maj, min_, pat = (int(x) for x in latest.split("."))
-          if level == "major":
-              maj, min_, pat = maj + 1, 0, 0
-          elif level == "minor":
-              min_, pat = min_ + 1, 0
-          else:
-              pat += 1
-          ver = f"{maj}.{min_}.{pat}"
-          for mf in glob.glob("custom_components/*/manifest.json"):
-              data = json.loads(Path(mf).read_text(encoding="utf-8"))
-              data["version"] = ver
-              Path(mf).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-          if Path("pyproject.toml").is_file():
-              txt = Path("pyproject.toml").read_text(encoding="utf-8")
-              txt = re.sub(r'^version\s*=\s*".*?"', f'version = "{ver}"', txt, count=1, flags=re.MULTILINE)
-              Path("pyproject.toml").write_text(txt, encoding="utf-8")
-          if Path("package.json").is_file():
-              pkg = json.loads(Path("package.json").read_text(encoding="utf-8"))
-              if "version" in pkg:
-                  pkg["version"] = ver
-                  Path("package.json").write_text(json.dumps(pkg, indent=2) + "\n", encoding="utf-8")
-          print(ver)
-          PY
-            )
-          fi
-          TAG="v${NEW_VER}"
-          git config user.name "faserf-hermes-agent[bot]"
-          git config user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
-          git add custom_components/*/manifest.json pyproject.toml package.json 2>/dev/null || true
-          git diff --staged --quiet || git commit -m "chore(release): ${TAG} [skip ci]"
-          git tag -f "${TAG}"
-          git push origin "HEAD:${REF_NAME}"
-          git push origin "${TAG}" --force
-          echo "tag_name=${TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Generate Changelog for GitHub Release
-        id: changelog
+      - name: Load Central Release Helpers
         shell: bash
         run: |
-          TARGET_TAG="${{ steps.bump.outputs.tag_name || inputs.tag_name || github.ref_name }}"
-          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | grep -v "^$TARGET_TAG$" | head -n 1 || true)
-          echo "Target tag: $TARGET_TAG, Previous tag: $PREV_TAG"
-          
-          if [ -f scripts/generate_changelog.py ]; then
-            python3 scripts/generate_changelog.py --from-tag "$PREV_TAG" --repo "${{ github.repository }}" > /tmp/gh_release_body.md
-          else
-            curl -fsSL https://raw.githubusercontent.com/FaserF/repo-template/main/scripts/generate_changelog.py -o /tmp/generate_changelog.py
-            python3 /tmp/generate_changelog.py --from-tag "$PREV_TAG" --repo "${{ github.repository }}" > /tmp/gh_release_body.md
+          mkdir -p /tmp/fleet-scripts
+          for f in version_manager.py release_details.py generate_changelog.py update_templates.py; do
+            if [ -f "scripts/$f" ]; then
+              cp "scripts/$f" "/tmp/fleet-scripts/$f"
+            elif [ -f ".github/scripts/$f" ]; then
+              cp ".github/scripts/$f" "/tmp/fleet-scripts/$f"
+            else
+              curl -fsSL "https://raw.githubusercontent.com/FaserF/repo-template/main/scripts/$f" -o "/tmp/fleet-scripts/$f" || true
+            fi
+          done
+          cp /tmp/fleet-scripts/generate_changelog.py /tmp/generate_changelog.py 2>/dev/null || true
+
+      - name: Resolve Version, Channel & Changelog Details
+        id: meta
+        env:
+          INPUT_TAG_NAME: ${{ inputs.tag_name }}
+          CHANNEL: ${{ (inputs.release_type == 'beta' || inputs.release_type == 'nightly' || inputs.release_type == 'stable') && inputs.release_type || inputs.channel }}
+          BUMP_LEVEL: ${{ (inputs.release_type == 'patch' || inputs.release_type == 'minor' || inputs.release_type == 'major') && inputs.release_type || inputs.bump_level }}
+          VERSION_OVERRIDE: ${{ inputs.version_override }}
+          RE_RELEASE: ${{ inputs.re_release }}
+          CUSTOM_MESSAGE: ${{ inputs.custom_message }}
+          PRERELEASE_FLAG: ${{ inputs.prerelease }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          PYTHONPATH=/tmp/fleet-scripts python3 /tmp/fleet-scripts/release_details.py
+
+      - name: Bump Version, Templates & Tag (When Not Re-Release)
+        id: tagstep
+        if: inputs.re_release != true && (inputs.tag_name == '' || inputs.version_override != '')
+        env:
+          TARGET_VER: ${{ steps.meta.outputs.version }}
+          TARGET_TAG: ${{ steps.meta.outputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          PYTHONPATH=/tmp/fleet-scripts DRY_RUN="" python3 -c "
+          import os, version_manager
+          version_manager.write_version(os.environ['TARGET_VER'])
+          "
+          if [ -f /tmp/fleet-scripts/update_templates.py ]; then
+            python3 /tmp/fleet-scripts/update_templates.py "$TARGET_VER" || true
           fi
-          
-          echo "Generated release body preview:"
-          head -n 25 /tmp/gh_release_body.md
+          git config user.name "faserf-hermes-agent[bot]"
+          git config user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
+          git add custom_components/*/manifest.json pyproject.toml package.json config.yaml .github/ISSUE_TEMPLATE/*.y*ml 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore(release): ${TARGET_TAG} [skip ci]"
+          git tag -f "$TARGET_TAG"
+          git push origin "HEAD:${REF_NAME}"
+          git push origin "$TARGET_TAG" --force
+          echo "created_tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Package HACS Zip Release
         id: hacs-zip
         shell: bash
         run: |
           python3 - <<'PY'
-          import glob
-          import json
-          import os
-          import zipfile
+          import glob, json, os, zipfile
           from pathlib import Path
 
           files_out = ""
@@ -137,8 +148,7 @@ jobs:
               if hacs_cfg.get("zip_release"):
                   manifests = glob.glob("custom_components/*/manifest.json")
                   if manifests:
-                      manifest = json.loads(Path(manifests[0]).read_text(encoding="utf-8"))
-                      domain = manifest["domain"]
+                      domain = json.loads(Path(manifests[0]).read_text(encoding="utf-8"))["domain"]
                       zip_name = hacs_cfg.get("filename") or f"{domain}.zip"
                       comp_dir = Path(manifests[0]).parent
                       with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -147,28 +157,28 @@ jobs:
                                   zf.write(p, p.relative_to(comp_dir))
                       files_out = zip_name
                       print(f"Packaged HACS release archive: {zip_name}")
-
-          gh_out = os.environ.get("GITHUB_OUTPUT")
-          if gh_out:
+          if gh_out := os.environ.get("GITHUB_OUTPUT"):
               with open(gh_out, "a", encoding="utf-8") as fh:
                   fh.write(f"files={files_out}\n")
           PY
 
-      - name: Publish GitHub Release
+      - name: Publish or Update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
-          tag_name: ${{ steps.bump.outputs.tag_name || inputs.tag_name || github.ref_name }}
-          name: ${{ steps.bump.outputs.tag_name || inputs.tag_name || github.ref_name }}
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
           body_path: /tmp/gh_release_body.md
           files: ${{ steps.hacs-zip.outputs.files }}
           draft: ${{ inputs.draft }}
+          prerelease: ${{ steps.meta.outputs.is_prerelease == 'true' }}
+          overwrite_files: true
 
       - name: Update Floating Major Version Tag
-        if: inputs.floating_major_tag == true
+        if: inputs.floating_major_tag == true && inputs.draft != true && steps.meta.outputs.is_prerelease != 'true' && !startsWith(steps.meta.outputs.tag, 'v0.')
         shell: bash
         run: |
-          TAG="${{ steps.bump.outputs.tag_name || inputs.tag_name || github.ref_name }}"
+          TAG="${{ steps.meta.outputs.tag }}"
           if [[ "$TAG" =~ ^v([0-9]+)\. ]]; then
             MAJOR="v${BASH_REMATCH[1]}"
             echo "Updating floating major tag $MAJOR -> $TAG"
@@ -177,3 +187,31 @@ jobs:
             git tag -fa "$MAJOR" -m "Release $TAG (floating major tag $MAJOR)"
             git push origin "$MAJOR" --force
           fi
+
+      - name: Optional Post-Release Dev Bump
+        if: inputs.post_dev_bump == true && inputs.re_release != true && steps.meta.outputs.is_prerelease != 'true' && inputs.draft != true
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          NEW_DEV=$(PYTHONPATH=/tmp/fleet-scripts python3 /tmp/fleet-scripts/version_manager.py bump --type dev --level patch)
+          if [ -f /tmp/fleet-scripts/update_templates.py ]; then
+            python3 /tmp/fleet-scripts/update_templates.py "$NEW_DEV" || true
+          fi
+          git config user.name "faserf-hermes-agent[bot]"
+          git config user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
+          git add custom_components/*/manifest.json pyproject.toml package.json config.yaml .github/ISSUE_TEMPLATE/*.y*ml 2>/dev/null || true
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(dev): bump to ${NEW_DEV} [skip ci]"
+            git push origin "HEAD:${REF_NAME}"
+          fi
+
+      - name: Rollback Created Tag on Failure
+        if: failure() && steps.tagstep.outcome == 'success' && steps.tagstep.outputs.created_tag != '' && inputs.re_release != true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tagstep.outputs.created_tag }}
+        shell: bash
+        run: |
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          git push --delete origin "$TAG" 2>/dev/null || true

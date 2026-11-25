@@ -99,8 +99,17 @@ def get_caller_workflow_ci(repo_type: str) -> str:
 on:
   push:
     branches: [main, master]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - ".github/ISSUE_TEMPLATE/**"
   pull_request:
     branches: [main, master]
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - ".github/ISSUE_TEMPLATE/**"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -227,8 +236,17 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      release_type:
-        description: "Version bump level"
+      channel:
+        description: "Release channel (stable, beta, nightly)"
+        required: true
+        default: "stable"
+        type: choice
+        options:
+          - stable
+          - beta
+          - nightly
+      bump_level:
+        description: "SemVer increment level (patch, minor, major)"
         required: true
         default: "patch"
         type: choice
@@ -236,8 +254,37 @@ on:
           - patch
           - minor
           - major
+      version_override:
+        description: "Force explicit version (e.g. 1.2.3 or 2026.11.0b1; overrides auto bump)"
+        required: false
+        default: ""
+        type: string
+      re_release:
+        description: "Re-release / update existing tag & GitHub release without bumping version"
+        required: false
+        default: false
+        type: boolean
+      prerelease:
+        description: "Prerelease override (auto, true, false)"
+        required: false
+        default: "auto"
+        type: choice
+        options:
+          - auto
+          - "true"
+          - "false"
       draft:
         description: "Create as draft release"
+        required: false
+        default: false
+        type: boolean
+      custom_message:
+        description: "Optional highlight note prepended to release changelog"
+        required: false
+        default: ""
+        type: string
+      post_dev_bump:
+        description: "Bump files to next -dev0 after stable release"
         required: false
         default: false
         type: boolean
@@ -250,8 +297,14 @@ jobs:
     uses: {TEMPLATE_REPO}/.github/workflows/reusable-release.yml@{TEMPLATE_VERSION}
     with:
       tag_name: ${{{{ github.event_name == 'push' && github.ref_name || '' }}}}
-      release_type: ${{{{ github.event_name == 'workflow_dispatch' && inputs.release_type || '' }}}}
+      channel: ${{{{ github.event_name == 'workflow_dispatch' && inputs.channel || 'stable' }}}}
+      bump_level: ${{{{ github.event_name == 'workflow_dispatch' && inputs.bump_level || 'patch' }}}}
+      version_override: ${{{{ github.event_name == 'workflow_dispatch' && inputs.version_override || '' }}}}
+      re_release: ${{{{ github.event_name == 'workflow_dispatch' && inputs.re_release || false }}}}
+      prerelease: ${{{{ github.event_name == 'workflow_dispatch' && inputs.prerelease || 'auto' }}}}
       draft: ${{{{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}}}
+      custom_message: ${{{{ github.event_name == 'workflow_dispatch' && inputs.custom_message || '' }}}}
+      post_dev_bump: ${{{{ github.event_name == 'workflow_dispatch' && inputs.post_dev_bump || false }}}}
     secrets: inherit
 """
 
@@ -353,12 +406,16 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
             in openhands_yml.read_text(encoding="utf-8", errors="ignore")
             and (workflows_dir / "labeler.yml").exists()
             and "create-github-app-token"
-            in (workflows_dir / "labeler.yml").read_text(encoding="utf-8", errors="ignore")
+            in (workflows_dir / "labeler.yml").read_text(
+                encoding="utf-8", errors="ignore"
+            )
             and (workflows_dir / "linter.yml").exists()
             and (workflows_dir / "pr-reviewer.yml").exists()
             and release_yml.exists()
-            and "workflow_dispatch"
+            and "re_release" in release_yml.read_text(encoding="utf-8", errors="ignore")
+            and "version_override"
             in release_yml.read_text(encoding="utf-8", errors="ignore")
+            and "paths-ignore" in ci_yml.read_text(encoding="utf-8", errors="ignore")
             and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}"
             in ci_yml.read_text(encoding="utf-8", errors="ignore")
             and f"{TEMPLATE_REPO}/.github/workflows/reusable-security-scanner.yml@{TEMPLATE_VERSION}"
