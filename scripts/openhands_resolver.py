@@ -67,95 +67,70 @@ def sanitized_shell_env() -> dict[str, str]:
     }
 
 
+def _tool(
+    name: str, desc: str, props: dict[str, Any], req: list[str] | None = None
+) -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": desc,
+            "parameters": {
+                "type": "object",
+                "properties": props,
+                **({"required": req} if req else {}),
+            },
+        },
+    }
+
+
 TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "list_files",
-            "description": "List tracked repository files matching optional substring.",
-            "parameters": {
-                "type": "object",
-                "properties": {"pattern": {"type": "string", "default": ""}},
-            },
+    _tool(
+        "list_files",
+        "List tracked repository files matching optional substring.",
+        {"pattern": {"type": "string", "default": ""}},
+    ),
+    _tool(
+        "read_file",
+        "Read a line slice of a workspace file (never reads .env/secrets).",
+        {
+            "path": {"type": "string"},
+            "start_line": {"type": "integer", "default": 1},
+            "end_line": {"type": "integer", "default": 200},
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_file",
-            "description": "Read a line slice of a workspace file (never reads .env/secrets).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "start_line": {"type": "integer", "default": 1},
-                    "end_line": {"type": "integer", "default": 200},
-                },
-                "required": ["path"],
-            },
+        ["path"],
+    ),
+    _tool(
+        "write_file",
+        "Write full content to a repository file.",
+        {"path": {"type": "string"}, "content": {"type": "string"}},
+        ["path", "content"],
+    ),
+    _tool(
+        "edit_file",
+        "Replace an exact unique target string in a repository file.",
+        {
+            "path": {"type": "string"},
+            "target": {"type": "string"},
+            "replacement": {"type": "string"},
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "write_file",
-            "description": "Write full content to a repository file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "content": {"type": "string"},
-                },
-                "required": ["path", "content"],
-            },
+        ["path", "target", "replacement"],
+    ),
+    _tool(
+        "run_shell",
+        "Run a verification, test, lint, or search command inside the repo.",
+        {"command": {"type": "string"}},
+        ["command"],
+    ),
+    _tool(
+        "finish",
+        "Call when fix is implemented AND verified, or if genuinely blocked.",
+        {
+            "status": {"type": "string", "enum": ["resolved", "no_changes", "blocked"]},
+            "summary": {"type": "string"},
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "edit_file",
-            "description": "Replace an exact unique target string in a repository file.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "target": {"type": "string"},
-                    "replacement": {"type": "string"},
-                },
-                "required": ["path", "target", "replacement"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_shell",
-            "description": "Run a verification, test, lint, or search command inside the repo.",
-            "parameters": {
-                "type": "object",
-                "properties": {"command": {"type": "string"}},
-                "required": ["command"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "finish",
-            "description": "Call when fix is implemented AND verified, or if genuinely blocked.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "status": {
-                        "type": "string",
-                        "enum": ["resolved", "no_changes", "blocked"],
-                    },
-                    "summary": {"type": "string"},
-                },
-                "required": ["status", "summary"],
-            },
-        },
-    },
+        ["status", "summary"],
+    ),
 ]
 
 
