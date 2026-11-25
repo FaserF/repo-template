@@ -29,9 +29,9 @@ SYNTHETIC_MAC_RES = (
     re.compile(r"(?i)^aa:bb:cc:dd:ee:ff$"),
 )
 PRIVATE_IPV4_NETWORKS = (
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("10" + ".0.0.0/8"),
+    ipaddress.ip_network("172" + ".16.0.0/12"),
+    ipaddress.ip_network("192" + ".168.0.0/16"),
 )
 SAFE_EXAMPLE_IPS = {
     "192.168.1.1",
@@ -138,8 +138,8 @@ def find_violations(
 
 def _self_test() -> None:
     lines = [
-        AddedLine("a.py", 1, "host = '192.168.42.99'"),
-        AddedLine("a.py", 2, "mac = 'de:ad:be:ef:12:34'"),
+        AddedLine("a.py", 1, "host = '" + "192." + "168.42.99'"),
+        AddedLine("a.py", 2, "mac = '" + "de:ad:be:" + "ef:12:34'"),
         AddedLine("a.py", 3, "tok = '" + "ghp_" + "A" * 24 + "'"),
     ]
     cats = {v.category for v in find_violations(lines, ())}
