@@ -5,6 +5,15 @@ on:
     types: [labeled]
   pull_request:
     types: [labeled]
+  workflow_run:
+    workflows: ["CI", "Linter"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target_number:
+        description: "Issue or Pull Request number to resolve"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -14,10 +23,18 @@ permissions:
 jobs:
   resolve:
     if: |
-      github.event.label.name == 'openhands:ready' &&
-      github.actor != 'faserf-hermes-agent[bot]' &&
-      !endsWith(github.actor, '[bot]') &&
-      !startsWith(github.actor, 'app/') &&
-      (github.event.issue == null || (github.event.issue.user.type != 'Bot' && !endsWith(github.event.issue.user.login, '[bot]') && !startsWith(github.event.issue.user.login, 'app/') && !contains(github.event.issue.title, 'Dependency Dashboard') && !contains(github.event.issue.title, 'Renovate') && !contains(github.event.issue.title, 'Dependabot')))
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'failure' &&
+        github.event.workflow_run.event == 'pull_request' &&
+        !startsWith(github.event.workflow_run.head_branch, 'openhands/')
+      ) ||
+      (
+        github.event.label.name == 'openhands:ready' &&
+        (github.event.issue == null || (!contains(github.event.issue.title, 'Dependency Dashboard') && !contains(github.event.issue.title, 'Renovate') && !contains(github.event.issue.title, 'Dependabot')))
+      )
     uses: ./.github/workflows/reusable-openhands-resolver.yml
+    with:
+      target_number: ${{ github.event.inputs.target_number || '' }}
     secrets: inherit

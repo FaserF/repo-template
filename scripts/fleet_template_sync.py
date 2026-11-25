@@ -131,6 +131,7 @@ jobs:
     uses: {TEMPLATE_REPO}/.github/workflows/reusable-issue-triage.yml@{TEMPLATE_VERSION}
     with:
       auto_openhands: true
+    secrets: inherit
 """
 
 
@@ -169,16 +170,31 @@ on:
     types: [labeled]
   pull_request:
     types: [labeled]
+  workflow_run:
+    workflows: ["CI", "Linter"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      target_number:
+        description: "Issue or Pull Request number to resolve"
+        required: true
+        type: string
 
 permissions:
   contents: write
   pull-requests: write
   issues: write
+  actions: read
 
 jobs:
   resolve:
-    if: github.event.label.name == 'openhands:ready'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'pull_request' && !startsWith(github.event.workflow_run.head_branch, 'openhands/')) ||
+      (github.event.label.name == 'openhands:ready' && (github.event.issue == null || (!contains(github.event.issue.title, 'Dependency Dashboard') && !contains(github.event.issue.title, 'Renovate') && !contains(github.event.issue.title, 'Dependabot'))))
     uses: {TEMPLATE_REPO}/.github/workflows/reusable-openhands-resolver.yml@{TEMPLATE_VERSION}
+    with:
+      target_number: ${{{{ github.event.inputs.target_number || '' }}}}
     secrets: inherit
 """
 
@@ -211,77 +227,11 @@ permissions:
   contents: write
 
 jobs:
-  prepare:
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ${{{{ (github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest' }}}}
-    outputs:
-      tag_name: ${{{{ steps.bump.outputs.tag_name }}}}
-    steps:
-      - name: Generate Bot Token
-        id: app-token
-        uses: actions/create-github-app-token@v3
-        continue-on-error: true
-        with:
-          app-id: ${{{{ secrets.BOT_APP_ID }}}}
-          private-key: ${{{{ secrets.BOT_PRIVATE_KEY }}}}
-
-      - name: Checkout Code
-        uses: actions/checkout@v7
-        with:
-          token: ${{{{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}}}
-          fetch-depth: 0
-
-      - name: Bump Version & Push Tag
-        id: bump
-        run: |
-          if [ -f .github/scripts/version_manager.py ]; then
-            NEW_VER=$(python3 .github/scripts/version_manager.py bump --type stable --level "${{{{ inputs.release_type }}}}")
-          else
-            NEW_VER=$(python3 - <<'PY'
-          import glob, json, os, re, subprocess
-          level = os.environ.get("RELEASE_TYPE", "patch")
-          tags = subprocess.check_output(["git", "tag", "--sort=-version:refname"], text=True).splitlines()
-          latest = next((t.lstrip("v") for t in tags if re.match(r"^v?\\d+\\.\\d+\\.\\d+$", t.strip())), "1.0.0")
-          maj, min_, pat = (int(x) for x in latest.split("."))
-          if level == "major":
-              maj, min_, pat = maj + 1, 0, 0
-          elif level == "minor":
-              min_, pat = min_ + 1, 0
-          else:
-              pat += 1
-          ver = f"{{maj}}.{{min_}}.{{pat}}"
-          for mf in glob.glob("custom_components/*/manifest.json"):
-              data = json.load(open(mf, encoding="utf-8"))
-              data["version"] = ver
-              with open(mf, "w", encoding="utf-8") as fh:
-                  json.dump(data, fh, indent=2)
-                  fh.write("\\n")
-          if os.path.exists("pyproject.toml"):
-              txt = open("pyproject.toml", encoding="utf-8").read()
-              txt = re.sub(r'^version\\s*=\\s*".*?"', f'version = "{{ver}}"', txt, count=1, flags=re.MULTILINE)
-              open("pyproject.toml", "w", encoding="utf-8").write(txt)
-          print(ver)
-          PY
-          )
-          fi
-          TAG="v${{NEW_VER}}"
-          git config user.name "{BOT_NAME}"
-          git config user.email "{BOT_EMAIL}"
-          git add custom_components/*/manifest.json pyproject.toml 2>/dev/null || true
-          git diff --staged --quiet || git commit -m "chore(release): ${{TAG}} [skip ci]"
-          git tag -f "${{TAG}}"
-          git push origin "HEAD:${{{{ github.ref_name }}}}"
-          git push origin "${{TAG}}" --force
-          echo "tag_name=${{TAG}}" >> "$GITHUB_OUTPUT"
-        env:
-          RELEASE_TYPE: ${{{{ inputs.release_type }}}}
-
   release:
-    needs: prepare
-    if: always() && (github.event_name == 'push' || needs.prepare.result == 'success')
     uses: {TEMPLATE_REPO}/.github/workflows/reusable-release.yml@{TEMPLATE_VERSION}
     with:
-      tag_name: ${{{{ github.event_name == 'workflow_dispatch' && needs.prepare.outputs.tag_name || github.ref_name }}}}
+      tag_name: ${{{{ github.event_name == 'push' && github.ref_name || '' }}}}
+      release_type: ${{{{ github.event_name == 'workflow_dispatch' && inputs.release_type || '' }}}}
       draft: ${{{{ github.event_name == 'workflow_dispatch' && inputs.draft || false }}}}
     secrets: inherit
 """
@@ -361,11 +311,18 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
                     has_obsolete = True
                     break
 
+        triage_yml = workflows_dir / "issue-triage.yml"
+        openhands_yml = workflows_dir / "openhands-resolver.yml"
+
         already_synced = (
             not has_obsolete
             and hermes_yml.exists()
             and sec_yml.exists()
             and ci_yml.exists()
+            and triage_yml.exists()
+            and "secrets: inherit" in triage_yml.read_text(encoding="utf-8", errors="ignore")
+            and openhands_yml.exists()
+            and "workflow_run:" in openhands_yml.read_text(encoding="utf-8", errors="ignore")
             and (workflows_dir / "linter.yml").exists()
             and (workflows_dir / "pr-reviewer.yml").exists()
             and release_yml.exists()

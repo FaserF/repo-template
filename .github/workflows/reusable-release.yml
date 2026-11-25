@@ -7,6 +7,10 @@ on:
         description: "Release tag name (e.g. v1.2.0)"
         type: string
         required: false
+      release_type:
+        description: "Optional version bump level for workflow_dispatch (patch, minor, major)"
+        type: string
+        default: ""
       draft:
         description: "Create as draft release"
         type: boolean
@@ -47,11 +51,62 @@ jobs:
         with:
           python-version: "3.15"
 
+      - name: Bump Version & Push Tag (Centralized)
+        id: bump
+        if: inputs.release_type != ''
+        env:
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ -f .github/scripts/version_manager.py ]; then
+            NEW_VER=$(python3 .github/scripts/version_manager.py bump --type stable --level "$RELEASE_TYPE")
+          else
+            NEW_VER=$(python3 - <<'PY'
+          import glob, json, os, re, subprocess
+          from pathlib import Path
+          level = os.environ.get("RELEASE_TYPE", "patch")
+          tags = subprocess.check_output(["git", "tag", "--sort=-version:refname"], text=True).splitlines()
+          latest = next((t.lstrip("v") for t in tags if re.match(r"^v?\d+\.\d+\.\d+$", t.strip())), "1.0.0")
+          maj, min_, pat = (int(x) for x in latest.split("."))
+          if level == "major":
+              maj, min_, pat = maj + 1, 0, 0
+          elif level == "minor":
+              min_, pat = min_ + 1, 0
+          else:
+              pat += 1
+          ver = f"{maj}.{min_}.{pat}"
+          for mf in glob.glob("custom_components/*/manifest.json"):
+              data = json.loads(Path(mf).read_text(encoding="utf-8"))
+              data["version"] = ver
+              Path(mf).write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+          if Path("pyproject.toml").is_file():
+              txt = Path("pyproject.toml").read_text(encoding="utf-8")
+              txt = re.sub(r'^version\s*=\s*".*?"', f'version = "{ver}"', txt, count=1, flags=re.MULTILINE)
+              Path("pyproject.toml").write_text(txt, encoding="utf-8")
+          if Path("package.json").is_file():
+              pkg = json.loads(Path("package.json").read_text(encoding="utf-8"))
+              if "version" in pkg:
+                  pkg["version"] = ver
+                  Path("package.json").write_text(json.dumps(pkg, indent=2) + "\n", encoding="utf-8")
+          print(ver)
+          PY
+            )
+          fi
+          TAG="v${NEW_VER}"
+          git config user.name "faserf-hermes-agent[bot]"
+          git config user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
+          git add custom_components/*/manifest.json pyproject.toml package.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore(release): ${TAG} [skip ci]"
+          git tag -f "${TAG}"
+          git push origin "HEAD:${REF_NAME}"
+          git push origin "${TAG}" --force
+          echo "tag_name=${TAG}" >> "$GITHUB_OUTPUT"
+
       - name: Generate Changelog for GitHub Release
         id: changelog
         shell: bash
         run: |
-          TARGET_TAG="${{ inputs.tag_name || github.ref_name }}"
+          TARGET_TAG="${{ steps.bump.outputs.tag_name || inputs.tag_name || github.ref_name }}"
           PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | grep -v "^$TARGET_TAG$" | head -n 1 || true)
           echo "Target tag: $TARGET_TAG, Previous tag: $PREV_TAG"
           

@@ -199,3 +199,20 @@ jobs:
                 labels: labelsToAdd
               });
             }
+
+            // If GITHUB_TOKEN was used (BOT_APP_ID unavailable), trigger workflow_dispatch directly
+            // because GitHub Actions suppresses labeled events emitted by GITHUB_TOKEN.
+            const usedAppToken = Boolean("${{ steps.app-token.outputs.token }}");
+            if (!usedAppToken && labelsToAdd.includes("openhands:ready")) {
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: "openhands-resolver.yml",
+                  ref: context.payload.repository.default_branch,
+                  inputs: { target_number: String(issue.number) }
+                });
+              } catch (dispatchErr) {
+                console.log(`Fallback OpenHands dispatch skipped: ${dispatchErr.message}`);
+              }
+            }

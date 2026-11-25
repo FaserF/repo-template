@@ -3,6 +3,10 @@ name: Reusable OpenHands Issue & PR Resolver
 on:
   workflow_call:
     inputs:
+      target_number:
+        description: "Optional Issue or PR number (used by workflow_dispatch)"
+        type: string
+        default: ""
       omniroute_base_url:
         description: "OmniRoute Base URL (falls back to secret OMNIROUTE_BASE_URL if omitted)"
         type: string
@@ -14,11 +18,11 @@ on:
       max_iterations:
         description: "Maximum agent loop iterations"
         type: number
-        default: 25
+        default: 20
       timeout_minutes:
-        description: "Timeout in minutes for OpenHands execution (default: 60)"
+        description: "Timeout in minutes for OpenHands execution (default: 45)"
         type: number
-        default: 60
+        default: 45
       runner:
         description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
         type: string
@@ -27,17 +31,16 @@ on:
 jobs:
   resolve:
     name: OpenHands Autonomous Solver
-    timeout-minutes: ${{ inputs.timeout_minutes || 60 }}
+    timeout-minutes: ${{ inputs.timeout_minutes || 45 }}
     if: |
-      github.actor != 'faserf-hermes-agent[bot]' &&
-      !endsWith(github.actor, '[bot]') &&
-      !startsWith(github.actor, 'app/') &&
-      (github.event.issue == null || (github.event.issue.user.type != 'Bot' && !endsWith(github.event.issue.user.login, '[bot]') && !startsWith(github.event.issue.user.login, 'app/') && !contains(github.event.issue.title, 'Dependency Dashboard') && !contains(github.event.issue.title, 'Renovate') && !contains(github.event.issue.title, 'Dependabot')))
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'pull_request' && !startsWith(github.event.workflow_run.head_branch, 'openhands/'))
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       contents: write
       pull-requests: write
       issues: write
+      actions: read
     steps:
       - name: Generate GitHub App Bot Token
         id: app-token
@@ -47,25 +50,100 @@ jobs:
           client-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
+      - name: Resolve Target Context
+        id: target
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          script: |
+            const explicitNum = "${{ inputs.target_number }}".trim();
+            let targetNum = 0;
+            let isPR = false;
+            let title = "";
+            let body = "";
+            let headRef = "";
+            let baseRef = context.payload.repository?.default_branch || "main";
+            let failedRunId = "";
+
+            if (context.eventName === "workflow_run" && context.payload.workflow_run) {
+              failedRunId = String(context.payload.workflow_run.id || "");
+              const prs = context.payload.workflow_run.pull_requests || [];
+              if (prs.length > 0) {
+                targetNum = prs[0].number;
+              } else if (context.payload.workflow_run.head_sha) {
+                const { data: assoc } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  commit_sha: context.payload.workflow_run.head_sha,
+                });
+                const openPr = assoc.find(p => p.state === "open");
+                if (openPr) targetNum = openPr.number;
+              }
+            } else if (explicitNum) {
+              targetNum = parseInt(explicitNum, 10) || 0;
+            } else if (context.payload.pull_request) {
+              targetNum = context.payload.pull_request.number;
+            } else if (context.payload.issue) {
+              targetNum = context.payload.issue.number;
+            }
+
+            if (targetNum > 0) {
+              const { data: issueData } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: targetNum,
+              });
+              isPR = Boolean(issueData.pull_request);
+              title = issueData.title || "";
+              body = issueData.body || "";
+              if (isPR) {
+                const { data: prData } = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: targetNum,
+                });
+                headRef = prData.head.ref;
+                baseRef = prData.base.ref;
+              }
+            }
+
+            core.setOutput("number", String(targetNum));
+            core.setOutput("is_pr", isPR ? "true" : "false");
+            core.setOutput("title", title);
+            core.setOutput("head_ref", headRef);
+            core.setOutput("base_ref", baseRef);
+            core.setOutput("failed_run_id", failedRunId);
+            await github.rest.issues.get({ owner: context.repo.owner, repo: context.repo.repo, issue_number: targetNum }).catch(() => null);
+            core.exportVariable("TARGET_BODY_FULL", body);
+
+      - name: Abort cleanly if no open PR or Issue target found
+        if: steps.target.outputs.number == '0'
+        run: |
+          echo "No target PR or Issue found for this event. Exiting."
+          exit 0
+
       - name: Checkout Target Repository
+        if: steps.target.outputs.number != '0'
         uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
-          ref: ${{ github.event.pull_request.head.ref || github.event.repository.default_branch }}
+          ref: ${{ steps.target.outputs.head_ref || github.event.repository.default_branch }}
           fetch-depth: 0
 
       - name: Setup Git Identity as faserf-hermes-agent[bot]
+        if: steps.target.outputs.number != '0'
         run: |
           git config --global user.name "faserf-hermes-agent[bot]"
           git config --global user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
 
       - name: Acknowledge Resolution Start
+        if: steps.target.outputs.number != '0'
         uses: actions/github-script@v9
         with:
           github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           script: |
-            const isPR = Boolean(context.payload.pull_request);
-            const targetNum = isPR ? context.payload.pull_request.number : context.payload.issue.number;
+            const targetNum = parseInt("${{ steps.target.outputs.number }}", 10);
+            const isPR = "${{ steps.target.outputs.is_pr }}" === "true";
             const targetType = isPR ? "Pull Request" : "Issue";
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -74,100 +152,49 @@ jobs:
               body: `> [!TIP]\n` +
                 `> 🛠️ **OpenHands Autonomous Solver Started (${targetType} #${targetNum})**  \n` +
                 `> **Engine:** \`${{ inputs.model }}\` via OmniRoute  \n` +
-                `> OpenHands is analyzing the repository, checking merge conflicts, fixing CI/action failures, and applying test-verified changes.`
+                `> Inspecting logs/review comments, applying test-verified fixes, and validating checks.`
             });
 
       - name: Setup Python
+        if: steps.target.outputs.number != '0'
         uses: actions/setup-python@v7
         with:
           python-version: "3.15"
 
-      - name: Prepare and Execute Resolver
+      - name: Execute Autonomous OpenHands Solver
+        id: solver
+        if: steps.target.outputs.number != '0'
         env:
-          IS_PR: ${{ github.event.pull_request != null }}
-          TARGET_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          TARGET_TITLE: ${{ github.event.pull_request.title || github.event.issue.title }}
-          TARGET_BODY: ${{ github.event.pull_request.body || github.event.issue.body }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          BASE_REF: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+          IS_PR: ${{ steps.target.outputs.is_pr }}
+          TARGET_NUMBER: ${{ steps.target.outputs.number }}
+          TARGET_TITLE: ${{ steps.target.outputs.title }}
+          TARGET_BODY: ${{ env.TARGET_BODY_FULL }}
+          HEAD_REF: ${{ steps.target.outputs.head_ref }}
+          BASE_REF: ${{ steps.target.outputs.base_ref }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          FAILED_RUN_ID: ${{ steps.target.outputs.failed_run_id }}
           OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_OPENHANDS_API_KEY || secrets.OMNIROUTE_API_KEY }}
           OMNIROUTE_BASE_URL: ${{ inputs.omniroute_base_url != '' && inputs.omniroute_base_url || secrets.OMNIROUTE_BASE_URL }}
           MODEL: ${{ inputs.model }}
+          MAX_ITERATIONS: ${{ inputs.max_iterations }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
-          cat << 'EOF' > /tmp/run_resolver.py
-          import os, subprocess, sys
-          from pathlib import Path
-
-          is_pr = os.environ.get("IS_PR", "false").lower() == "true"
-          num = os.environ.get("TARGET_NUMBER", "0")
-          title = os.environ.get("TARGET_TITLE", "")
-          head_ref = os.environ.get("HEAD_REF", "")
-          base_ref = os.environ.get("BASE_REF", "main")
-          default_branch = os.environ.get("DEFAULT_BRANCH", "main")
-
-          print(f"Executing resolver: is_pr={is_pr}, target=#{num}, head={head_ref}, base={base_ref}")
-
-          if is_pr and head_ref:
-              # PR mode: Rebase / Merge conflicts resolution
-              print(f"Checking merge conflicts against {base_ref}...")
-              subprocess.run(["git", "fetch", "origin", base_ref], check=False)
-              res = subprocess.run(["git", "merge", f"origin/{base_ref}", "--no-commit", "--no-ff"], capture_output=True, text=True)
-              if res.returncode != 0:
-                  print("Merge conflict detected! Resolving standard formatting and lockfile conflicts...")
-                  subprocess.run(["git", "checkout", "--ours", "."], check=False)
-                  subprocess.run(["git", "add", "."], check=False)
-                  subprocess.run(["git", "commit", "-m", f"chore(merge): resolve conflicts against {base_ref} [skip ci]"], check=False)
-              else:
-                  subprocess.run(["git", "merge", "--abort"], check=False)
-
-              # Action / Lint autofix
-              if list(Path(".").glob("**/*.py")):
-                  subprocess.run(["python", "-m", "pip", "install", "ruff"], check=False)
-                  subprocess.run(["ruff", "check", "--fix", "."], check=False)
-                  subprocess.run(["ruff", "format", "."], check=False)
-
-              # Check status and commit
-              status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
-              if status:
-                  subprocess.run(["git", "add", "."], check=True)
-                  subprocess.run(["git", "commit", "-m", f"fix(agent): auto-fix CI issues and merge upstream by Hermes Agent [skip ci]"], check=True)
-                  subprocess.run(["git", "push", "origin", f"HEAD:{head_ref}"], check=True)
-                  print("Pushed fixes to PR branch.")
-              else:
-                  print("No changes required.")
-          else:
-              # Issue mode: create branch and open PR
-              branch_name = f"openhands/issue-{num}"
-              subprocess.run(["git", "checkout", "-b", branch_name], check=True)
-              if list(Path(".").glob("**/*.py")):
-                  subprocess.run(["python", "-m", "pip", "install", "ruff"], check=False)
-                  subprocess.run(["ruff", "check", "--fix", "."], check=False)
-                  subprocess.run(["ruff", "format", "."], check=False)
-              note = Path(".openhands_resolution.md")
-              note.write_text(f"# Resolution for Issue #{num}: {title}\n\nResolved by OpenHands & Hermes Agent.\n", encoding="utf-8")
-              subprocess.run(["git", "add", "."], check=True)
-              subprocess.run(["git", "commit", "-m", f"fix: resolve #{num} - {title}"], check=False)
-              subprocess.run(["git", "push", "origin", branch_name, "--force"], check=False)
-              subprocess.run([
-                  "gh", "pr", "create",
-                  "--title", f"fix: resolve #{num} - {title}",
-                  "--body", f"Closes #{num}\n\nAutomated fix by OpenHands & Hermes Fleet AI.",
-                  "--head", branch_name,
-                  "--base", default_branch
-              ], check=False)
-          EOF
-          python /tmp/run_resolver.py
+          if [ -f scripts/openhands_resolver.py ]; then
+            python3 scripts/openhands_resolver.py
+          else
+            curl -fsSL https://raw.githubusercontent.com/FaserF/repo-template/main/scripts/openhands_resolver.py -o /tmp/openhands_resolver.py
+            python3 /tmp/openhands_resolver.py
+          fi
 
       - name: Cleanup Ready Label & Post Summary
-        if: always()
+        if: always() && steps.target.outputs.number != '0'
         uses: actions/github-script@v9
         with:
           github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           script: |
-            const isPR = Boolean(context.payload.pull_request);
-            const targetNum = isPR ? context.payload.pull_request.number : context.payload.issue.number;
+            const targetNum = parseInt("${{ steps.target.outputs.number }}", 10);
+            const status = "${{ steps.solver.outputs.resolver_status || 'blocked' }}";
+            const summary = `${{ steps.solver.outputs.resolver_summary || 'See workflow logs for details.' }}`;
             try {
               await github.rest.issues.removeLabel({
                 owner: context.repo.owner,
@@ -177,11 +204,12 @@ jobs:
               });
             } catch (e) {}
 
+            const badge = status === "resolved" ? "✅ **OpenHands Autonomous Resolution Complete**" :
+                          status === "no_changes" ? "ℹ️ **OpenHands Inspection Complete (No Changes Needed)**" :
+                          "⚠️ **OpenHands Autonomous Solver Blocked / Incomplete**";
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: targetNum,
-              body: `> [!NOTE]\n` +
-                `> ✅ **OpenHands Autonomous Resolution Complete**  \n` +
-                `> Investigated #${targetNum}. Automated changes, conflict resolutions, and formatting fixes have been committed and pushed.`
+              body: `> [!NOTE]\n> ${badge}  \n> ${summary}`
             });

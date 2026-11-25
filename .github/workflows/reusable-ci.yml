@@ -10,7 +10,7 @@ on:
       python_version:
         description: "Python version for test runners"
         type: string
-        default: "3.14"
+        default: "3.15"
       runner:
         description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
         type: string

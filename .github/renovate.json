@@ -59,9 +59,10 @@
       ]
     },
     {
-      "description": "Avoid pinning Home Assistant manifest.json requirements (Hassfest compliance)",
+      "description": "Avoid pinning Home Assistant manifest.json and test requirements (Hassfest & HA Core compatibility)",
       "matchFileNames": [
-        "custom_components/*/manifest.json"
+        "custom_components/*/manifest.json",
+        "requirements*.txt"
       ],
       "rangeStrategy": "widen"
     },
