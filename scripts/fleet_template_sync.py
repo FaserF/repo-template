@@ -17,7 +17,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 log = logging.getLogger("fleet_template_sync")
 
 PILOT_REPOS = [
@@ -29,14 +31,23 @@ PILOT_REPOS = [
 
 TEMPLATE_REPO = "FaserF/repo-template"
 TEMPLATE_VERSION = "v1"
-TEMPLATE_LOCAL_DIR = Path(os.environ.get("TEMPLATE_DIR", Path(__file__).resolve().parent.parent if (Path(__file__).resolve().parent.parent / "AGENTS.md").exists() else "c:/Users/fabian/GitHub/repo-template"))
+TEMPLATE_LOCAL_DIR = Path(
+    os.environ.get(
+        "TEMPLATE_DIR",
+        Path(__file__).resolve().parent.parent
+        if (Path(__file__).resolve().parent.parent / "AGENTS.md").exists()
+        else "c:/Users/fabian/GitHub/repo-template",
+    )
+)
 
 BOT_NAME = "faserf-hermes-agent[bot]"
 BOT_EMAIL = "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
 BOT_APP_LINK = "https://github.com/apps/faserf-hermes-agent"
 
 
-def run_cmd(cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None) -> tuple[int, str, str]:
+def run_cmd(
+    cmd: list[str], cwd: Path | None = None, env: dict[str, str] | None = None
+) -> tuple[int, str, str]:
     """Run subprocess command and return exit code, stdout, stderr."""
     res = subprocess.run(
         cmd,
@@ -68,9 +79,17 @@ def detect_repo_type(repo_name: str, work_dir: Path) -> str:
 def sanitize_no_personal_links(content: str) -> str:
     """Replace personal domain references (fabiseitz.de) with official GitHub App link."""
     # Replace markdown links
-    content = re.sub(r"\[([^\]]+)\]\(https?://(?:[a-zA-Z0-9\-_]+\.)?fabiseitz\.de[^\)]*\)", r"[\1](" + BOT_APP_LINK + ")", content)
+    content = re.sub(
+        r"\[([^\]]+)\]\(https?://(?:[a-zA-Z0-9\-_]+\.)?fabiseitz\.de[^\)]*\)",
+        r"[\1](" + BOT_APP_LINK + ")",
+        content,
+    )
     # Replace plain URLs
-    content = re.sub(r"https?://(?:[a-zA-Z0-9\-_]+\.)?fabiseitz\.de[^\s\)\"\'>]*", BOT_APP_LINK, content)
+    content = re.sub(
+        r"https?://(?:[a-zA-Z0-9\-_]+\.)?fabiseitz\.de[^\s\)\"\'>]*",
+        BOT_APP_LINK,
+        content,
+    )
     return content
 
 
@@ -287,7 +306,9 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
         clone_path = Path(tmp_dir) / "repo"
 
         # 1. Clone repository
-        code, _, err = run_cmd(["gh", "repo", "clone", repo_full_name, str(clone_path), "--", "--depth=1"])
+        code, _, err = run_cmd(
+            ["gh", "repo", "clone", repo_full_name, str(clone_path), "--", "--depth=1"]
+        )
         if code != 0:
             log.error("Failed to clone %s: %s", repo_full_name, err)
             return False
@@ -303,9 +324,12 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
         has_obsolete = False
         if workflows_dir.exists():
             for obs in [
-                "ci-orchestrator.yml", "issue-orchestrator.yml",
-                "validate-integration.yaml", "validate-integration.yml",
-                "validate.yaml", "validate.yml"
+                "ci-orchestrator.yml",
+                "issue-orchestrator.yml",
+                "validate-integration.yaml",
+                "validate-integration.yml",
+                "validate.yaml",
+                "validate.yml",
             ]:
                 if (workflows_dir / obs).exists():
                     has_obsolete = True
@@ -320,19 +344,28 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
             and sec_yml.exists()
             and ci_yml.exists()
             and triage_yml.exists()
-            and "secrets: inherit" in triage_yml.read_text(encoding="utf-8", errors="ignore")
+            and "secrets: inherit"
+            in triage_yml.read_text(encoding="utf-8", errors="ignore")
             and openhands_yml.exists()
-            and "workflow_run:" in openhands_yml.read_text(encoding="utf-8", errors="ignore")
+            and "workflow_run:"
+            in openhands_yml.read_text(encoding="utf-8", errors="ignore")
             and (workflows_dir / "linter.yml").exists()
             and (workflows_dir / "pr-reviewer.yml").exists()
             and release_yml.exists()
-            and "workflow_dispatch" in release_yml.read_text(encoding="utf-8", errors="ignore")
-            and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}" in ci_yml.read_text(encoding="utf-8", errors="ignore")
-            and f"{TEMPLATE_REPO}/.github/workflows/reusable-security-scanner.yml@{TEMPLATE_VERSION}" in sec_yml.read_text(encoding="utf-8", errors="ignore")
+            and "workflow_dispatch"
+            in release_yml.read_text(encoding="utf-8", errors="ignore")
+            and f"{TEMPLATE_REPO}/.github/workflows/reusable-ci.yml@{TEMPLATE_VERSION}"
+            in ci_yml.read_text(encoding="utf-8", errors="ignore")
+            and f"{TEMPLATE_REPO}/.github/workflows/reusable-security-scanner.yml@{TEMPLATE_VERSION}"
+            in sec_yml.read_text(encoding="utf-8", errors="ignore")
         )
 
         if already_synced:
-            log.info("Repository %s already has correct template baseline at %s. Skipping.", repo_full_name, TEMPLATE_VERSION)
+            log.info(
+                "Repository %s already has correct template baseline at %s. Skipping.",
+                repo_full_name,
+                TEMPLATE_VERSION,
+            )
             return True
 
         # Determine repo type
@@ -400,7 +433,10 @@ permissions:
                 dst_path = clone_path / src_rel
                 if src_path.exists():
                     # Preserve existing custom repository-specific files (and avoid duplicate root renovate.json)
-                    if src_rel == ".github/renovate.json" and (clone_path / "renovate.json").exists():
+                    if (
+                        src_rel == ".github/renovate.json"
+                        and (clone_path / "renovate.json").exists()
+                    ):
                         log.info("Preserving root renovate.json in %s", repo_full_name)
                         continue
                     if dst_path.exists() and src_rel in [
@@ -413,7 +449,11 @@ permissions:
                         ".github/ISSUE_TEMPLATE/feature_request.yml",
                         ".github/ISSUE_TEMPLATE/config.yml",
                     ]:
-                        log.info("Preserving existing custom %s in %s", src_rel, repo_full_name)
+                        log.info(
+                            "Preserving existing custom %s in %s",
+                            src_rel,
+                            repo_full_name,
+                        )
                         continue
 
                     dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -422,7 +462,10 @@ permissions:
                     # Dynamic project discussions link in config.yml
                     if src_rel == ".github/ISSUE_TEMPLATE/config.yml":
                         cfg_txt = dst_path.read_text(encoding="utf-8")
-                        cfg_txt = cfg_txt.replace("FaserF/repo-template/discussions", f"{repo_full_name}/discussions")
+                        cfg_txt = cfg_txt.replace(
+                            "FaserF/repo-template/discussions",
+                            f"{repo_full_name}/discussions",
+                        )
                         dst_path.write_text(cfg_txt, encoding="utf-8")
 
             # Sync shared helper scripts from template scripts/ directory
@@ -449,43 +492,74 @@ permissions:
         ]:
             obs_path = workflows_dir / obsolete
             if obs_path.exists():
-                log.info("Removing obsolete pre-template workflow %s in %s", obsolete, repo_full_name)
+                log.info(
+                    "Removing obsolete pre-template workflow %s in %s",
+                    obsolete,
+                    repo_full_name,
+                )
                 obs_path.unlink()
 
         # 5. Generate caller workflows (preserving specialized CI/release for addons & CalVer repos)
         if repo_type == "ha-addon":
-            log.info("Preserving specialized addon orchestrator CI/release in %s", repo_full_name)
+            log.info(
+                "Preserving specialized addon orchestrator CI/release in %s",
+                repo_full_name,
+            )
         else:
             has_custom_ci = False
             if repo_type != "ha-integration":
                 for candidate in ["test.yml", "tests.yml", "build.yml", "pipeline.yml"]:
                     c_path = workflows_dir / candidate
-                    if c_path.exists() and TEMPLATE_REPO not in c_path.read_text(encoding="utf-8", errors="ignore"):
+                    if c_path.exists() and TEMPLATE_REPO not in c_path.read_text(
+                        encoding="utf-8", errors="ignore"
+                    ):
                         has_custom_ci = True
                         break
 
             if not has_custom_ci:
-                (workflows_dir / "ci.yml").write_text(get_caller_workflow_ci(repo_type), encoding="utf-8")
+                (workflows_dir / "ci.yml").write_text(
+                    get_caller_workflow_ci(repo_type), encoding="utf-8"
+                )
             else:
-                log.info("Preserving repository's specialized CI pipeline in %s", repo_full_name)
+                log.info(
+                    "Preserving repository's specialized CI pipeline in %s",
+                    repo_full_name,
+                )
 
             # Preserve CalVer release workflows (e.g. v2026.x) that rely on custom version_manager.py
             is_calver = (github_dir / "scripts" / "version_manager.py").exists() and (
-                "beta" in (workflows_dir / "release.yml").read_text(encoding="utf-8", errors="ignore")
+                "beta"
+                in (workflows_dir / "release.yml").read_text(
+                    encoding="utf-8", errors="ignore"
+                )
                 if (workflows_dir / "release.yml").exists()
                 else False
             )
             if is_calver:
                 log.info("Preserving CalVer release.yml in %s", repo_full_name)
             else:
-                (workflows_dir / "release.yml").write_text(get_caller_workflow_release(), encoding="utf-8")
+                (workflows_dir / "release.yml").write_text(
+                    get_caller_workflow_release(), encoding="utf-8"
+                )
 
-        (workflows_dir / "linter.yml").write_text(get_caller_workflow_linter(), encoding="utf-8")
-        (workflows_dir / "issue-triage.yml").write_text(get_caller_workflow_issue_triage(), encoding="utf-8")
-        (workflows_dir / "hermes-bot.yml").write_text(get_caller_workflow_bot(), encoding="utf-8")
-        (workflows_dir / "openhands-resolver.yml").write_text(get_caller_workflow_openhands(), encoding="utf-8")
-        (workflows_dir / "pr-reviewer.yml").write_text(get_caller_workflow_pr_reviewer(), encoding="utf-8")
-        (workflows_dir / "security-scanner.yml").write_text(get_caller_workflow_security_scanner(), encoding="utf-8")
+        (workflows_dir / "linter.yml").write_text(
+            get_caller_workflow_linter(), encoding="utf-8"
+        )
+        (workflows_dir / "issue-triage.yml").write_text(
+            get_caller_workflow_issue_triage(), encoding="utf-8"
+        )
+        (workflows_dir / "hermes-bot.yml").write_text(
+            get_caller_workflow_bot(), encoding="utf-8"
+        )
+        (workflows_dir / "openhands-resolver.yml").write_text(
+            get_caller_workflow_openhands(), encoding="utf-8"
+        )
+        (workflows_dir / "pr-reviewer.yml").write_text(
+            get_caller_workflow_pr_reviewer(), encoding="utf-8"
+        )
+        (workflows_dir / "security-scanner.yml").write_text(
+            get_caller_workflow_security_scanner(), encoding="utf-8"
+        )
 
         # 5. Sanitize any legacy workflows or templates for personal links
         for f in github_dir.rglob("*.y*ml"):
@@ -504,7 +578,9 @@ permissions:
             return True
 
         if not apply:
-            log.info("[DRY-RUN] Changes detected for %s:\n%s", repo_full_name, status_out)
+            log.info(
+                "[DRY-RUN] Changes detected for %s:\n%s", repo_full_name, status_out
+            )
             return True
 
         # 7. Commit & Create PR
@@ -527,8 +603,19 @@ permissions:
         # Push branch
         gh_token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
         if gh_token:
-            run_cmd(["git", "remote", "set-url", "origin", f"https://x-access-token:{gh_token}@github.com/{repo_full_name}.git"], cwd=clone_path)
-        code, _, push_err = run_cmd(["git", "push", "-u", "origin", branch_name, "--force"], cwd=clone_path)
+            run_cmd(
+                [
+                    "git",
+                    "remote",
+                    "set-url",
+                    "origin",
+                    f"https://x-access-token:{gh_token}@github.com/{repo_full_name}.git",
+                ],
+                cwd=clone_path,
+            )
+        code, _, push_err = run_cmd(
+            ["git", "push", "-u", "origin", branch_name, "--force"], cwd=clone_path
+        )
         if code != 0:
             log.error("Failed to push branch to %s: %s", repo_full_name, push_err)
             return False
@@ -544,13 +631,22 @@ permissions:
             "* **Clean Attribution:** Zero personal domain exposures; all bot references link to [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent).\n\n"
             "> *Triggered autonomously by Hermes Fleet AI on behalf of @FaserF.*"
         )
-        code, pr_out, pr_err = run_cmd([
-            "gh", "pr", "create",
-            "--repo", repo_full_name,
-            "--head", branch_name,
-            "--title", "chore(ci): standardize workflows, issue triage and agent guidelines from repo-template",
-            "--body", pr_body,
-        ], cwd=clone_path)
+        code, pr_out, pr_err = run_cmd(
+            [
+                "gh",
+                "pr",
+                "create",
+                "--repo",
+                repo_full_name,
+                "--head",
+                branch_name,
+                "--title",
+                "chore(ci): standardize workflows, issue triage and agent guidelines from repo-template",
+                "--body",
+                pr_body,
+            ],
+            cwd=clone_path,
+        )
 
         if code == 0:
             log.info("Successfully created PR for %s: %s", repo_full_name, pr_out)
@@ -565,29 +661,59 @@ permissions:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fleet Template Synchronizer")
-    parser.add_argument("--pilot", action="store_true", help="Run only on the 4 pilot repositories")
-    parser.add_argument("--all", action="store_true", help="Run across all non-fork FaserF repositories")
-    parser.add_argument("--repos", nargs="+", help="Specific repositories to sync (e.g. FaserF/ShieldDNS)")
-    parser.add_argument("--apply", action="store_true", help="Apply changes and open PRs (default is dry-run)")
+    parser.add_argument(
+        "--pilot", action="store_true", help="Run only on the 4 pilot repositories"
+    )
+    parser.add_argument(
+        "--all", action="store_true", help="Run across all non-fork FaserF repositories"
+    )
+    parser.add_argument(
+        "--repos",
+        nargs="+",
+        help="Specific repositories to sync (e.g. FaserF/ShieldDNS)",
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply changes and open PRs (default is dry-run)",
+    )
     args = parser.parse_args()
 
     targets: list[str] = []
     if args.pilot:
         targets = PILOT_REPOS
     elif args.repos:
-        targets = args.repos
+        targets = [r for item in args.repos for r in item.split() if r.strip()]
     elif args.all:
-        code, out, err = run_cmd(["gh", "repo", "list", "FaserF", "--limit", "100", "--json", "nameWithOwner,isFork,isArchived"])
+        code, out, err = run_cmd(
+            [
+                "gh",
+                "repo",
+                "list",
+                "FaserF",
+                "--limit",
+                "100",
+                "--json",
+                "nameWithOwner,isFork,isArchived",
+            ]
+        )
         if code == 0:
             import json
+
             for r in json.loads(out):
-                if not r.get("isFork") and not r.get("isArchived") and r.get("nameWithOwner") != TEMPLATE_REPO:
+                if (
+                    not r.get("isFork")
+                    and not r.get("isArchived")
+                    and r.get("nameWithOwner") != TEMPLATE_REPO
+                ):
                     targets.append(r["nameWithOwner"])
         else:
             log.error("Failed to list repos: %s", err)
             sys.exit(1)
     else:
-        log.info("No targets specified. Use --pilot, --repos, or --all. (Defaulting to --pilot)")
+        log.info(
+            "No targets specified. Use --pilot, --repos, or --all. (Defaulting to --pilot)"
+        )
         targets = PILOT_REPOS
 
     log.info("Selected %d target repositories for synchronization.", len(targets))
@@ -596,7 +722,11 @@ def main() -> None:
         if sync_repository(t, apply=args.apply):
             successes += 1
 
-    log.info("Completed template sync: %d/%d repositories processed successfully.", successes, len(targets))
+    log.info(
+        "Completed template sync: %d/%d repositories processed successfully.",
+        successes,
+        len(targets),
+    )
 
 
 if __name__ == "__main__":

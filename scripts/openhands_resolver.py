@@ -101,7 +101,10 @@ TOOLS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "status": {"type": "string", "enum": ["resolved", "no_changes", "blocked"]},
+                    "status": {
+                        "type": "string",
+                        "enum": ["resolved", "no_changes", "blocked"],
+                    },
                     "summary": {"type": "string"},
                 },
                 "required": ["status", "summary"],
@@ -126,9 +129,15 @@ def run_cmd(cmd: list[str], timeout: int = 120) -> tuple[int, str, str]:
     return res.returncode, res.stdout.strip(), res.stderr.strip()
 
 
-def gh_api(path: str, token: str, method: str = "GET", body: dict[str, Any] | None = None) -> Any:
+def gh_api(
+    path: str, token: str, method: str = "GET", body: dict[str, Any] | None = None
+) -> Any:
     """Call GitHub REST API cleanly."""
-    url = path if path.startswith("https://") else f"https://api.github.com/{path.lstrip('/')}"
+    url = (
+        path
+        if path.startswith("https://")
+        else f"https://api.github.com/{path.lstrip('/')}"
+    )
     headers = {
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "FaserF-OpenHands-Resolver",
@@ -234,44 +243,70 @@ def build_context_prompt(
 
     if is_pr:
         run_cmd(["git", "fetch", "origin", base_ref])
-        merge_res = run_cmd(["git", "merge", f"origin/{base_ref}", "--no-commit", "--no-ff"])
+        merge_res = run_cmd(
+            ["git", "merge", f"origin/{base_ref}", "--no-commit", "--no-ff"]
+        )
         if merge_res[0] != 0:
-            _, status_out, _ = run_cmd(["git", "diff", "--name-only", "--diff-filter=U"])
+            _, status_out, _ = run_cmd(
+                ["git", "diff", "--name-only", "--diff-filter=U"]
+            )
             conflict_files = [f for f in status_out.splitlines() if f.strip()]
-            sections.append(f"MERGE CONFLICTS DETECTED against {base_ref}: {conflict_files}")
+            sections.append(
+                f"MERGE CONFLICTS DETECTED against {base_ref}: {conflict_files}"
+            )
         else:
             run_cmd(["git", "merge", "--abort"])
 
-        _, diff_stat, _ = run_cmd(["git", "diff", f"origin/{base_ref}...HEAD", "--stat"])
+        _, diff_stat, _ = run_cmd(
+            ["git", "diff", f"origin/{base_ref}...HEAD", "--stat"]
+        )
         sections.append(f"PR Diff Stat:\n{diff_stat[:2000]}")
 
         if repo and number > 0:
             try:
                 comments = gh_api(f"repos/{repo}/issues/{number}/comments", token) or []
-                review_comments = gh_api(f"repos/{repo}/pulls/{number}/comments", token) or []
+                review_comments = (
+                    gh_api(f"repos/{repo}/pulls/{number}/comments", token) or []
+                )
                 reviews = gh_api(f"repos/{repo}/pulls/{number}/reviews", token) or []
                 fb_lines = []
                 for item in reviews + review_comments + comments[-10:]:
                     author = ((item.get("user") or {}).get("login") or "").lower()
                     txt = (item.get("body") or "").strip()
-                    if txt and any(k in author for k in ("coderabbit", "hermes", "faserf", "github-actions")):
-                        loc = f"{item.get('path')}:{item.get('line')} " if item.get("path") else ""
+                    if txt and any(
+                        k in author
+                        for k in ("coderabbit", "hermes", "faserf", "github-actions")
+                    ):
+                        loc = (
+                            f"{item.get('path')}:{item.get('line')} "
+                            if item.get("path")
+                            else ""
+                        )
                         fb_lines.append(f"- [{author}] {loc}{txt[:500]}")
                 if fb_lines:
-                    sections.append("Review Comments / Bot Feedback:\n" + "\n".join(fb_lines[:15]))
+                    sections.append(
+                        "Review Comments / Bot Feedback:\n" + "\n".join(fb_lines[:15])
+                    )
             except (urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
                 sections.append(f"(Could not load PR comments cleanly: {exc})")
 
         if failed_run_id:
-            code, out, _ = run_cmd(["gh", "run", "view", failed_run_id, "--log-failed"], timeout=60)
+            code, out, _ = run_cmd(
+                ["gh", "run", "view", failed_run_id, "--log-failed"], timeout=60
+            )
             if code == 0 and out:
-                sections.append(f"Failing Workflow Run #{failed_run_id} Log Tail:\n{out[-5000:]}")
+                sections.append(
+                    f"Failing Workflow Run #{failed_run_id} Log Tail:\n{out[-5000:]}"
+                )
     else:
         if repo and number > 0:
             try:
                 comments = gh_api(f"repos/{repo}/issues/{number}/comments", token) or []
                 if comments:
-                    snippets = [f"- {(c.get('user') or {}).get('login')}: {(c.get('body') or '')[:400]}" for c in comments[-6:]]
+                    snippets = [
+                        f"- {(c.get('user') or {}).get('login')}: {(c.get('body') or '')[:400]}"
+                        for c in comments[-6:]
+                    ]
                     sections.append("Issue Comments:\n" + "\n".join(snippets))
             except (urllib.error.URLError, json.JSONDecodeError, OSError) as exc:
                 sections.append(f"(Could not load issue comments: {exc})")
@@ -349,7 +384,10 @@ def run_agent_loop(
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
             content = (msg.get("content") or "").strip()
-            return ("no_changes" if not has_git_changes() else "resolved", content or "Completed without explicit finish tool.")
+            return (
+                "no_changes" if not has_git_changes() else "resolved",
+                content or "Completed without explicit finish tool.",
+            )
 
         for tc in tool_calls:
             fn = tc.get("function") or {}
@@ -365,15 +403,26 @@ def run_agent_loop(
                 )
             try:
                 result = exec_tool(fn_name, fn_args)
-            except (OSError, ValueError, KeyError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+            except (
+                OSError,
+                ValueError,
+                KeyError,
+                json.JSONDecodeError,
+                subprocess.SubprocessError,
+            ) as exc:
                 result = f"Tool error: {exc}"
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc.get("id", ""),
-                "content": result,
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", ""),
+                    "content": result,
+                }
+            )
 
-    return ("blocked", f"Reached maximum iteration limit ({max_iterations}) without finishing.")
+    return (
+        "blocked",
+        f"Reached maximum iteration limit ({max_iterations}) without finishing.",
+    )
 
 
 def has_git_changes() -> bool:
@@ -441,7 +490,9 @@ def main() -> int:
             return 1
         head_ref = branch_name
 
-    prompt_ctx, _ = build_context_prompt(repo, token, is_pr, number, title, body, base_ref, failed_run_id)
+    prompt_ctx, _ = build_context_prompt(
+        repo, token, is_pr, number, title, body, base_ref, failed_run_id
+    )
     try:
         status, summary = run_agent_loop(base_url, api_key, model, prompt_ctx, max_iter)
     except urllib.error.URLError as exc:
@@ -473,19 +524,21 @@ def main() -> int:
             write_outcome("blocked", f"git push failed: {p_err}")
             return 1
         if not is_pr:
-            run_cmd([
-                "gh",
-                "pr",
-                "create",
-                "--title",
-                f"fix: resolve #{number} - {title}",
-                "--body",
-                f"Closes #{number}\n\n{summary}\n\nAutomated verified fix by OpenHands & Hermes Fleet AI.",
-                "--head",
-                target_branch,
-                "--base",
-                default_branch,
-            ])
+            run_cmd(
+                [
+                    "gh",
+                    "pr",
+                    "create",
+                    "--title",
+                    f"fix: resolve #{number} - {title}",
+                    "--body",
+                    f"Closes #{number}\n\n{summary}\n\nAutomated verified fix by OpenHands & Hermes Fleet AI.",
+                    "--head",
+                    target_branch,
+                    "--base",
+                    default_branch,
+                ]
+            )
 
     write_outcome(status, summary)
     print(f"Resolver finished: status={status} summary={summary}")
