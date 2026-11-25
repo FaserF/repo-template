@@ -40,3 +40,4 @@ Contributions, issues, and feature requests are welcome! Feel free to check the 
 
 ## License
 Distributed under the [MIT License](LICENSE).
+
