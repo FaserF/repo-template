@@ -599,7 +599,7 @@ permissions:
             "chore(ci): standardize workflows, issue triage and agent guidelines\n\n"
             "- Connect to reusable workflows in FaserF/repo-template\n"
             "- Add automated two-stage issue triage and OpenHands resolution\n"
-            "- Add CodeRabbit-parity interactive commands (@faserf-hermes-agent)\n"
+            "- Add interactive review & maintenance commands (@faserf-hermes-agent)\n"
             "- Add fleet AGENTS.md guidelines and sanitized community templates\n"
             "- Standardize commit author and review attribution under faserf-hermes-agent[bot]"
         )
@@ -630,7 +630,7 @@ permissions:
             "## 🤖 Fleet Template Standardization\n\n"
             "This pull request standardizes this repository against the central source of truth: [`FaserF/repo-template`](https://github.com/FaserF/repo-template).\n\n"
             "### Changes Included:\n"
-            "* **Reusable Workflows:** Thin caller workflows connected to central CI, linter, release, and CodeRabbit-parity bot listeners.\n"
+            "* **Reusable Workflows:** Thin caller workflows connected to central CI, linter, release, and automated bot listeners.\n"
             "* **Issue Auto-Triage & OpenHands:** Pre-filled verification checklist, version detection, and autonomous bugfix solving.\n"
             "* **Agent Guidelines:** Standardized `AGENTS.md` specifying fleet hygiene and bot author constraints.\n"
             "* **Clean Attribution:** Zero personal domain exposures; all bot references link to [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent).\n\n"

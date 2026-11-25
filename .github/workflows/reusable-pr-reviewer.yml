@@ -15,19 +15,38 @@ on:
         description: "Runner environment ('ubuntu-latest', 'self-hosted', or 'auto')"
         type: string
         default: "auto"
+      auto_commit_safe_fixes:
+        description: "Automatically commit simple, verified non-breaking fixes on writable PR branches"
+        type: boolean
+        default: true
 
 jobs:
   review:
     name: Hermes PR Reviewer
     timeout-minutes: 20
     if: |
-      github.event_name != 'pull_request' ||
-      github.event.action != 'review_requested' ||
-      contains(github.event.requested_reviewer.login, 'hermes') ||
-      contains(github.event.requested_reviewer.login, 'faserf')
+      github.actor != 'faserf-hermes-agent[bot]' &&
+      github.event_name == 'pull_request' &&
+      !contains(github.event.pull_request.title, '[skip hermes]') &&
+      !contains(github.event.pull_request.title, '[skip review]') &&
+      !contains(github.event.pull_request.title, '[skip ci]') &&
+      (
+        github.event.action != 'review_requested' ||
+        contains(github.event.requested_reviewer.login, 'hermes') ||
+        contains(github.event.requested_reviewer.login, 'faserf')
+      ) &&
+      (
+        github.event.action == 'review_requested' ||
+        (
+          github.event.pull_request.user.login != 'renovate[bot]' &&
+          github.event.pull_request.user.login != 'dependabot[bot]' &&
+          !startsWith(github.event.pull_request.head.ref, 'renovate/') &&
+          !startsWith(github.event.pull_request.head.ref, 'dependabot/')
+        )
+      )
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
       issues: write
     steps:
@@ -38,6 +57,15 @@ jobs:
         with:
           client-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
+      - name: Checkout PR Branch for Verification & Safe Auto-Fix
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/checkout@v7
+        continue-on-error: true
+        with:
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 1
 
       - name: Request Hermes Bot as Reviewer
         if: github.event.action == 'opened' || github.event.action == 'reopened'
@@ -64,8 +92,9 @@ jobs:
 
       - name: Prepare Review Engine Script
         run: |
-          cat << 'EOF' > run_pr_review.py
-          import json, os, re, sys, time, urllib.request, urllib.error
+          cat << 'EOF' > /tmp/run_pr_review.py
+          import json, os, py_compile, re, shutil, subprocess, sys, time, urllib.error, urllib.request
+          from pathlib import Path
 
           pr_num = int(os.environ.get("PR_NUMBER", "0"))
           repo = os.environ.get("GITHUB_REPOSITORY", "")
@@ -73,70 +102,105 @@ jobs:
           omniroute_url = (os.environ.get("OMNIROUTE_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
           omniroute_key = os.environ.get("OMNIROUTE_API_KEY", "")
           model = os.environ.get("MODEL", "auto/coding")
+          can_autocommit = (
+              os.environ.get("ALLOW_AUTOCOMMIT", "true").lower() == "true"
+              and os.environ.get("SAME_REPO_PR", "false").lower() == "true"
+              and Path(".git").is_dir()
+          )
 
           if not token or not repo or pr_num <= 0:
               print("Missing review parameters. Exiting.")
               sys.exit(0)
 
-          if not omniroute_key:
-              if os.environ.get("IS_FORK", "false").lower() == "true":
-                  print("No OMNIROUTE_API_KEY available on external fork PR. Exiting cleanly.")
-              else:
-                  print("::warning::OMNIROUTE_OPENHANDS_API_KEY / OMNIROUTE_API_KEY is missing in repository secrets; skipping AI PR review.")
-              sys.exit(0)
-          if not os.environ.get("OMNIROUTE_BASE_URL"):
-              print("::warning::OMNIROUTE_BASE_URL is not set in repository secrets.")
-
-          headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3+json", "User-Agent": "FaserF-Hermes-Reviewer"}
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github.v3+json",
+              "User-Agent": "FaserF-Hermes-Reviewer",
+          }
           owner, name = repo.split("/")
           start_time = time.time()
           marker = "<!-- hermes-ai-reviewer-status -->"
-          status_cid = None
 
-          # 0. Set or edit in-place status comment
-          try:
-              req_sc = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments", headers=headers)
-              with urllib.request.urlopen(req_sc, timeout=10) as sc_resp:
-                  for sc in json.loads(sc_resp.read().decode()):
-                      if marker in (sc.get("body") or ""):
-                          status_cid = sc.get("id")
-                          break
-              in_prog_body = f"{marker}\n> 🔄 **FaserF Hermes Agent Reviewer:** Analysis in progress... (`0s` elapsed)  \n> **Engine:** OmniRoute (`{model}`) · Validating PR diff & fleet standards..."
-              if status_cid:
-                  req_p = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/comments/{status_cid}", headers=headers, data=json.dumps({"body": in_prog_body}).encode(), method="PATCH")
-                  urllib.request.urlopen(req_p, timeout=10)
-              else:
-                  req_p = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments", headers=headers, data=json.dumps({"body": in_prog_body}).encode())
-                  with urllib.request.urlopen(req_p, timeout=10) as p_res:
-                      status_cid = json.loads(p_res.read().decode()).get("id")
-          except Exception as exc:
-              print(f"Status start note: {exc}")
+          def gh_json(url: str, data: dict | None = None, method: str = "GET"):
+              req = urllib.request.Request(
+                  url,
+                  headers=headers,
+                  data=json.dumps(data).encode() if data is not None else None,
+                  method=method,
+              )
+              with urllib.request.urlopen(req, timeout=20) as resp:
+                  return json.loads(resp.read().decode())
 
-          # 1. Fetch PR details
-          req = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}", headers=headers)
-          with urllib.request.urlopen(req) as resp:
-              pr_data = json.loads(resp.read().decode())
-          commit_sha = pr_data.get("head", {}).get("sha", "")
+          def is_dependency_pr(pr_data: dict, files: list[str]) -> bool:
+              author = ((pr_data.get("user") or {}).get("login") or "").lower()
+              head_ref = ((pr_data.get("head") or {}).get("ref") or "").lower()
+              title = (pr_data.get("title") or "").lower()
+              if author in ("renovate[bot]", "dependabot[bot]") or head_ref.startswith(("renovate/", "dependabot/")):
+                  return True
+              if title.startswith(("chore(deps)", "build(deps)")) or "configure renovate" in title:
+                  return True
+              dep_only = {
+                  "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+                  "uv.lock", "poetry.lock", "cargo.lock", "go.mod", "go.sum",
+                  "requirements.txt", "requirements_test.txt", ".github/renovate.json", "renovate.json",
+              }
+              return bool(files) and all(Path(f).name in dep_only or f in dep_only for f in files)
+
+          def classify_pr(files: list[str], diff_lines: int) -> tuple[str, int, str]:
+              doc_exts = {".md", ".txt", ".rst", ".png", ".jpg", ".svg", ".ico"}
+              doc_names = {"LICENSE", ".gitignore", "strings.json", "icons.json", "hacs.json"}
+              if files and all(
+                  Path(f).suffix.lower() in doc_exts
+                  or Path(f).name in doc_names
+                  or "/translations/" in f
+                  or "/brand/" in f
+                  for f in files
+              ):
+                  return "fast-docs", 12000, "auto/coding"
+              if diff_lines <= 160 and len(files) <= 4:
+                  return "fast-small", 16000, model
+              return "deep-code", 40000, model
+
+          # 1. Fetch PR details & check skip/dedup
+          pr_data = gh_json(f"https://api.github.com/repos/{repo}/pulls/{pr_num}")
+          commit_sha = (pr_data.get("head") or {}).get("sha", "")
+          head_ref = (pr_data.get("head") or {}).get("ref", "")
           pr_title = pr_data.get("title", "")
 
-          if any(m in pr_title.lower() for m in ["[skip hermes]", "[skip review]", "[skip ci]"]):
-              print(f"PR title '{pr_title}' contains skip marker. Skipping review.")
+          if any(m in pr_title.lower() for m in ("[skip hermes]", "[skip review]", "[skip ci]")):
+              print(f"Skipping review due to title marker: {pr_title}")
               sys.exit(0)
 
-          # 2. Fetch PR diff
-          diff_headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github.v3.diff", "User-Agent": "FaserF-Hermes-Reviewer"}
-          req_diff = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}", headers=diff_headers)
           try:
-              with urllib.request.urlopen(req_diff) as resp:
-                  diff_text = resp.read().decode()
+              for r in gh_json(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/reviews"):
+                  login = ((r.get("user") or {}).get("login") or "").lower()
+                  if r.get("commit_id") == commit_sha and "faserf-hermes-agent" in login:
+                      print(f"Commit {commit_sha[:8]} already reviewed by {login}. Skipping duplicate run.")
+                      sys.exit(0)
+          except Exception as exc:
+              print(f"Review dedup note: {exc}")
+
+          # 2. Fetch PR diff
+          diff_headers = {**headers, "Accept": "application/vnd.github.v3.diff"}
+          try:
+              with urllib.request.urlopen(urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}", headers=diff_headers), timeout=20) as d_resp:
+                  diff_text = d_resp.read().decode(errors="replace")
           except Exception:
               diff_text = ""
 
           if not diff_text.strip():
-              print("No diff to review.")
+              print("Empty diff. Exiting cleanly.")
               sys.exit(0)
 
-          # 2c. AI & Deterministic Secret Scanner: Scan PR diff for credentials & exposed keys
+          changed_files = []
+          diff_line_count = 0
+          for ln in diff_text.splitlines():
+              if ln.startswith("+++ b/"):
+                  changed_files.append(ln[6:].strip())
+              elif (ln.startswith("+") and not ln.startswith("+++")) or (ln.startswith("-") and not ln.startswith("---")):
+                  diff_line_count += 1
+
+          # 3. Deterministic secret scan (always runs, 0 LLM tokens)
           secret_rules = [
               ("GitHub Token", r"gh[pousr]_[A-Za-z0-9_]{36,}"),
               ("AWS Access Key", r"AKIA[0-9A-Z]{16}"),
@@ -145,11 +209,10 @@ jobs:
               ("Telegram Bot Token", r"[0-9]{8,10}:[a-zA-Z0-9_-]{35}"),
               ("Tailscale Key", r"tskey-(?:auth|client)-[a-zA-Z0-9]+"),
               ("Infisical Token", r"st\.[a-f0-9]{24,}\.[a-zA-Z0-9]{32,}"),
-              ("Hardcoded Secret/Password", r"(?i)(?:api[_-]?key|secret|password|auth[_-]?token|access[_-]?token)\s*[:=]\s*['\"][A-Za-z0-9_\-.~!@#$%^&*+=]{14,}['\"]"),
+              ("Hardcoded Credential", r"(?i)(?:api[_-]?key|secret|password|auth[_-]?token|access[_-]?token)\s*[:=]\s*['\"][A-Za-z0-9_\-.~!@#$%^&*+=]{14,}['\"]"),
           ]
           secret_findings = []
-          curr_file = None
-          curr_line = 0
+          curr_file, curr_line = None, 0
           for d_line in diff_text.splitlines():
               if d_line.startswith("+++ b/"):
                   curr_file = d_line[6:].strip()
@@ -159,97 +222,90 @@ jobs:
                       curr_line = int(m.group(1)) - 1
               elif d_line.startswith("+") and not d_line.startswith("+++"):
                   curr_line += 1
-                  added_text = d_line[1:]
-                  if any(dummy in added_text.lower() for dummy in ["mock_", "fake_", "dummy_", "test_", "example", "placeholder", "xxx"]):
+                  added = d_line[1:]
+                  if any(d in added.lower() for d in ("mock_", "fake_", "dummy_", "test_", "example", "placeholder", "xxx")):
                       continue
                   for s_name, s_pat in secret_rules:
-                      if re.search(s_pat, added_text):
+                      if re.search(s_pat, added):
                           secret_findings.append({
                               "path": curr_file or "unknown",
                               "line": curr_line,
                               "severity": "Critical",
-                              "title": f"🚨 Security Alert: Leaked {s_name}",
-                              "body": f"> [!CAUTION]\n> 🚨 **Critical Secret Exposure:** Hardcoded `{s_name}` found in added lines.\n> Never commit plaintext secrets to Git repositories.\n> 1. Revoke / rotate this credential immediately.\n> 2. Remove it from branch history (`git commit --amend` or rebase).\n> 3. Reference environment variables via `.env` / Infisical.",
+                              "title": f"Security Alert: Leaked {s_name}",
+                              "body": f"> [!CAUTION]\n> Hardcoded `{s_name}` found in added lines. Rotate immediately and store in `.env` / Infisical.",
+                              "safe_autofix": False,
                               "suggested_diff": "",
-                              "agent_prompt": f"Remove {s_name} from {curr_file} and load securely from environment variable."
+                              "agent_prompt": f"Remove hardcoded {s_name} from {curr_file} and load from environment variables.",
                           })
               elif not d_line.startswith("-"):
                   curr_line += 1
 
-          # 2b. Check for existing CodeRabbit review findings (Platform API + GitHub comments)
-          coderabbit_present, skip_or_limited = False, False
-          cr_comments = []
-          skip_markers = ("rate limit", "limit reached", "review skipped", "skipping review", "bot user detected", "trivial", "too small", "outside of the review scope", "not analyzing", "fewer than 10 stars", "10 stars")
-          repo_id = str((pr_data.get("base") or {}).get("repo", {}).get("id") or "")
-          cr_api_key = os.environ.get("CODERABBIT_API_KEY", "")
+          # Skip LLM review, codebase health, and doc/wiki checks cleanly on dependency PRs
+          if is_dependency_pr(pr_data, changed_files) and not secret_findings:
+              print("Dependency update PR detected cleanly with 0 secret issues; skipping redundant AI/doc/health analysis.")
+              sys.exit(0)
 
-          if cr_api_key and repo_id:
-              try:
-                  req_cr_api = urllib.request.Request(
-                      f"https://api.coderabbit.ai/v1/repositories/{repo_id}/pull-requests/{pr_num}/review/summary",
-                      headers={"x-coderabbitai-api-key": cr_api_key, "User-Agent": "Jarvis-PR-Reviewer"}
-                  )
-                  with urllib.request.urlopen(req_cr_api, timeout=10) as cr_resp:
-                      if cr_resp.status == 200:
-                          cr_json = json.loads(cr_resp.read().decode())
-                          summary_md = (cr_json.get("summary") or {}).get("body_markdown") or ""
-                          if summary_md and not any(m in summary_md.lower() for m in skip_markers):
-                              coderabbit_present = True
-                              cr_comments.append({"path": "Repository", "line": 1, "body": summary_md[:300]})
-                      elif cr_resp.status == 404:
-                          skip_or_limited = True
-              except Exception as exc:
-                  print(f"CodeRabbit Platform API check note: {exc}")
+          if not omniroute_key and not secret_findings:
+              if os.environ.get("IS_FORK", "false").lower() == "true":
+                  print("No OMNIROUTE_API_KEY available on external fork PR. Exiting cleanly.")
+              else:
+                  print("::warning::OMNIROUTE_OPENHANDS_API_KEY / OMNIROUTE_API_KEY is missing in repository secrets; skipping AI PR review.")
+              sys.exit(0)
+          if omniroute_key and not os.environ.get("OMNIROUTE_BASE_URL"):
+              print("::warning::OMNIROUTE_BASE_URL is not set in repository secrets.")
 
+          # Update status comment
+          status_cid = None
+          review_mode, max_diff_len, routed_model = classify_pr(changed_files, diff_line_count)
           try:
-              req_ic = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments", headers=headers)
-              with urllib.request.urlopen(req_ic, timeout=10) as c_resp:
-                  for c in json.loads(c_resp.read().decode()):
-                      u, b = ((c.get("user") or {}).get("login") or "").lower(), (c.get("body") or "").lower()
-                      if "coderabbit" in u and any(m in b for m in skip_markers):
-                          skip_or_limited = True
-          except Exception:
-              pass
+              for sc in gh_json(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments"):
+                  if marker in (sc.get("body") or ""):
+                      status_cid = sc.get("id")
+                      break
+              in_prog = f"{marker}\n> 🔄 **FaserF Hermes Agent Reviewer:** Analysis in progress...  \n> **Engine:** OmniRoute (`{routed_model}` · `{review_mode}`) · Hermes Fleet Code Intelligence"
+              if status_cid:
+                  gh_json(f"https://api.github.com/repos/{repo}/issues/comments/{status_cid}", {"body": in_prog}, method="PATCH")
+              else:
+                  status_cid = gh_json(f"https://api.github.com/repos/{repo}/issues/{pr_num}/comments", {"body": in_prog}, method="POST").get("id")
+          except Exception as exc:
+              print(f"Status note: {exc}")
 
-          try:
-              req_rv = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/reviews", headers=headers)
-              with urllib.request.urlopen(req_rv, timeout=10) as r_resp:
-                  for r in json.loads(r_resp.read().decode()):
-                      u, b = ((r.get("user") or {}).get("login") or "").lower(), (r.get("body") or "").lower()
-                      if "coderabbit" in u:
-                          if any(m in b for m in skip_markers):
-                              skip_or_limited = True
-                          elif r.get("state") in ("APPROVED", "CHANGES_REQUESTED", "COMMENTED"):
-                              coderabbit_present = True
-          except Exception:
-              pass
+          # 4. Deterministic safe auto-fixes on touched files (only before AI review if writable)
+          autocommitted_notes = []
+          py_touched = [f for f in changed_files if f.endswith(".py") and Path(f).is_file()]
+          if can_autocommit and py_touched:
+              if shutil.which("ruff") is None:
+                  subprocess.run(["python", "-m", "pip", "install", "--quiet", "ruff"], check=False)
+              if shutil.which("ruff"):
+                  subprocess.run(["ruff", "check", "--select", "F401,I001,W291,W292,W293", "--fix", *py_touched], check=False)
+                  for pf in py_touched:
+                      try:
+                          py_compile.compile(pf, doraise=True)
+                      except py_compile.PyCompileError:
+                          subprocess.run(["git", "checkout", "--", pf], check=False)
+                  det_diff = subprocess.run(["git", "diff", "--name-only"], capture_output=True, text=True).stdout.splitlines()
+                  if det_diff:
+                      autocommitted_notes.append(f"Auto-cleaned imports/whitespace in `{', '.join(det_diff)}`")
 
-          if not skip_or_limited:
-              try:
-                  req_cm = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/comments", headers=headers)
-                  with urllib.request.urlopen(req_cm, timeout=10) as c_resp:
-                      for c in json.loads(c_resp.read().decode()):
-                          if "coderabbit" in ((c.get("user") or {}).get("login") or "").lower():
-                              coderabbit_present = True
-                              cr_comments.append({"path": c.get("path"), "line": c.get("line"), "body": (c.get("body") or "")[:200]})
-              except Exception:
-                  pass
+          # 5. Adaptive OmniRoute Review
+          is_diff_truncated = len(diff_text) > max_diff_len
+          analyzed_diff = diff_text[:max_diff_len]
+          docs_mode_hint = (
+              "This PR only modifies docs/translations/assets. Focus strictly on typos, broken markdown/JSON, or schema errors. Do NOT ask for unit tests."
+              if review_mode == "fast-docs"
+              else "For trivial, guaranteed non-breaking fixes (<= 5 lines, e.g. missing return annotation, simple typo, unused variable), set \"safe_autofix\": true with exact unique \"old_snippet\" and \"new_snippet\" so the bot can commit them safely."
+          )
 
-          cr_text = ""
-          if coderabbit_present and cr_comments and not skip_or_limited:
-              items = "\n".join(f"- `{c.get('path')}:{c.get('line')}`: {c.get('body')}" for c in cr_comments[:6])
-              cr_text = f"\nExisting CodeRabbit findings on this PR:\n{items}\nDirectives: Never duplicate. Confirm/refute in short_summary. Add only new deep findings.\n"
-
-          # 3. Call OmniRoute Review Engine (100% Repowise & CodeRabbit Parity)
-          review_prompt = f"""You are FaserF Hermes Agent Reviewer, providing 100% parity with CodeRabbit AI and Repowise Bot for @FaserF repositories.
-          Analyze this Pull Request diff. Return strictly valid JSON:
+          review_prompt = f"""You are FaserF Hermes Agent Reviewer for @FaserF repositories.
+          Profile: {review_mode} ({len(changed_files)} files, {diff_line_count} changed lines). {docs_mode_hint}
+          Analyze this PR diff and return strictly valid JSON (no markdown fences):
           {{
             "event": "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
-            "short_summary": "1-2 sentence overview of implementation.",
-            "health_score": {{"before": 9.20, "after": 9.15, "delta": -0.05, "rating": "Healthy"}},
-            "test_estimate": "Summary of touched files covered by tests vs untested complexity.",
-            "hygiene_notes": ["Untested complexity in ...", "Complex methods in ..."],
-            "walkthrough_table": [{{"component": "Core", "file": "path/file.ext", "summary": "what changed"}}],
+            "short_summary": "1-2 sentence overview of changes.",
+            "health_score": {{"before": 9.20, "after": 9.20, "delta": 0.0, "rating": "Healthy"}},
+            "test_estimate": "Brief assessment of test coverage or 'N/A (docs/config)'.",
+            "hygiene_notes": [],
+            "walkthrough_table": [{{"file": "path/file.ext", "summary": "concise change summary"}}],
             "findings": [
               {{
                 "path": "path/to/file.ext",
@@ -257,187 +313,232 @@ jobs:
                 "severity": "Major" | "Minor" | "Suggestion",
                 "title": "Short title",
                 "body": "Explanation of issue.",
+                "safe_autofix": false,
+                "old_snippet": "",
+                "new_snippet": "",
                 "suggested_diff": "```diff\\n- old\\n+ new\\n```",
-                "agent_prompt": "Imperative instruction for an AI agent to fix."
+                "agent_prompt": "Imperative fix instruction."
               }}
             ]
           }}
-          max_diff_len = 64000
-          is_diff_truncated = len(diff_text) > max_diff_len
-          analyzed_diff = diff_text[:max_diff_len]
 
           Diff:
           ```diff
           {analyzed_diff}
-          ```
-          {cr_text}"""
+          ```"""
 
-          llm_headers = {"Authorization": f"Bearer {omniroute_key}", "Content-Type": "application/json"}
-          llm_payload = json.dumps({"model": model, "messages": [{"role": "user", "content": review_prompt}], "temperature": 0.1}).encode()
+          parsed = {"event": "COMMENT", "short_summary": "Automated review complete.", "findings": []}
+          if omniroute_key and not secret_findings:
+              try:
+                  llm_req = urllib.request.Request(
+                      f"{omniroute_url}/chat/completions",
+                      headers={"Authorization": f"Bearer {omniroute_key}", "Content-Type": "application/json"},
+                      data=json.dumps({
+                          "model": routed_model,
+                          "messages": [{"role": "user", "content": review_prompt}],
+                          "temperature": 0.1,
+                      }).encode(),
+                  )
+                  with urllib.request.urlopen(llm_req, timeout=180) as resp:
+                      raw_out = json.loads(resp.read().decode())["choices"][0]["message"]["content"].strip()
+                  if raw_out.startswith("```"):
+                      lines = raw_out.splitlines()
+                      raw_out = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:]).strip()
+                  parsed = json.loads(raw_out)
+              except Exception as exc:
+                  print(f"OmniRoute review generation skipped: {exc}")
+                  parsed = {"event": "COMMENT", "short_summary": f"Automated hygiene check note: {exc}", "findings": []}
 
-          try:
-              llm_req = urllib.request.Request(f"{omniroute_url}/chat/completions", headers=llm_headers, data=llm_payload)
-              with urllib.request.urlopen(llm_req, timeout=180) as resp:
-                  llm_resp = json.loads(resp.read().decode())
-              raw_out = llm_resp["choices"][0]["message"]["content"].strip()
-              if raw_out.startswith("```"):
-                  raw_out = "\n".join(raw_out.splitlines()[1:-1] if raw_out.splitlines()[-1].startswith("```") else raw_out.splitlines()[1:]).strip()
-              parsed = json.loads(raw_out)
-          except Exception as exc:
-              print(f"OmniRoute review generation skipped: {exc}")
-              parsed = {"event": "COMMENT", "short_summary": f"Automated hygiene verification incomplete: {exc}", "findings": []}
+          # 6. Apply safe, verified LLM micro-fixes on writable branches
+          remaining_findings = list(secret_findings)
+          for f in parsed.get("findings", []):
+              applied = False
+              fpath = f.get("path", "")
+              old_s = f.get("old_snippet", "")
+              new_s = f.get("new_snippet", "")
+              if (
+                  can_autocommit
+                  and not secret_findings
+                  and f.get("safe_autofix") is True
+                  and f.get("severity") in ("Minor", "Suggestion", "Nitpick")
+                  and fpath in changed_files
+                  and old_s
+                  and new_s != old_s
+                  and len(old_s.splitlines()) <= 5
+                  and len(new_s.splitlines()) <= 5
+                  and Path(fpath).is_file()
+              ):
+                  original = Path(fpath).read_text(encoding="utf-8")
+                  if original.count(old_s) == 1:
+                      updated = original.replace(old_s, new_s, 1)
+                      Path(fpath).write_text(updated, encoding="utf-8")
+                      valid = True
+                      try:
+                          if fpath.endswith(".py"):
+                              py_compile.compile(fpath, doraise=True)
+                          elif fpath.endswith(".json"):
+                              json.loads(updated)
+                      except Exception:
+                          valid = False
+                      if valid:
+                          applied = True
+                          autocommitted_notes.append(f"`{fpath}:{f.get('line', 1)}` — {f.get('title')}")
+                      else:
+                          Path(fpath).write_text(original, encoding="utf-8")
+              if not applied:
+                  remaining_findings.append(f)
 
-          findings = secret_findings + parsed.get("findings", [])
+          if can_autocommit:
+              git_dirty = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout.strip()
+              if git_dirty and head_ref:
+                  subprocess.run(["git", "config", "user.name", "faserf-hermes-agent[bot]"], check=False)
+                  subprocess.run(["git", "config", "user.email", "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"], check=False)
+                  subprocess.run(["git", "add", *changed_files], check=False)
+                  staged = subprocess.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True).stdout.strip()
+                  if staged:
+                      subprocess.run(["git", "commit", "-m", "chore(review): apply safe non-breaking review fixes"], check=True)
+                      push_res = subprocess.run(["git", "push", "origin", f"HEAD:{head_ref}"], capture_output=True, text=True)
+                      if push_res.returncode == 0:
+                          commit_sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+                          print(f"Auto-committed {len(autocommitted_notes)} safe fix(es) to {head_ref}.")
+                      else:
+                          print(f"Auto-commit push skipped: {push_res.stderr}")
+                          autocommitted_notes.clear()
+
+          findings = remaining_findings
           if secret_findings:
               event = "REQUEST_CHANGES"
+          elif any(f.get("severity") in ("Critical", "Major") for f in findings):
+              event = "REQUEST_CHANGES"
           else:
-              event = parsed.get("event", "APPROVE" if not findings else "REQUEST_CHANGES")
+              event = parsed.get("event", "APPROVE" if not findings else "COMMENT")
+              if not findings and event == "REQUEST_CHANGES":
+                  event = "APPROVE"
 
-          # 4. GraphQL: Auto-resolve addressed threads
+          # 7. Auto-resolve addressed review threads
           active_keys = {(f.get("path"), f.get("line")) for f in findings}
           query_threads = """query($owner: String!, $name: String!, $pr: Int!) {
             repository(owner: $owner, name: $name) {
               pullRequest(number: $pr) {
                 reviewThreads(first: 50) {
-                  nodes {
-                    id
-                    isResolved
-                    path
-                    line
-                    comments(first: 1) { nodes { author { login } } }
-                  }
+                  nodes { id isResolved path line comments(first: 1) { nodes { author { login } } } }
                 }
               }
             }
           }"""
-          gql_headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
           try:
-              gql_req = urllib.request.Request("https://api.github.com/graphql", headers=gql_headers, data=json.dumps({"query": query_threads, "variables": {"owner": owner, "name": name, "pr": pr_num}}).encode())
-              with urllib.request.urlopen(gql_req, timeout=15) as g_resp:
-                  g_data = json.loads(g_resp.read().decode())
+              g_data = gh_json("https://api.github.com/graphql", {"query": query_threads, "variables": {"owner": owner, "name": name, "pr": pr_num}}, method="POST")
               threads = g_data.get("data", {}).get("repository", {}).get("pullRequest", {}).get("reviewThreads", {}).get("nodes", [])
-
               mutation_resolve = """mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } } }"""
               for t in threads:
                   if not t.get("isResolved"):
                       author = ((t.get("comments", {}).get("nodes") or [{}])[0].get("author") or {}).get("login", "")
-                      if "faserf-hermes-agent" in author or "hermes" in author:
-                          if (t.get("path"), t.get("line")) not in active_keys and t.get("id"):
-                              m_req = urllib.request.Request("https://api.github.com/graphql", headers=gql_headers, data=json.dumps({"query": mutation_resolve, "variables": {"threadId": t["id"]}}).encode())
-                              try:
-                                  urllib.request.urlopen(m_req, timeout=10)
-                                  print(f"Auto-resolved thread {t['id']} on {t.get('path')}:{t.get('line')}")
-                              except Exception:
-                                  pass
+                      if ("faserf-hermes-agent" in author or "hermes" in author) and (t.get("path"), t.get("line")) not in active_keys and t.get("id"):
+                          gh_json("https://api.github.com/graphql", {"query": mutation_resolve, "variables": {"threadId": t["id"]}}, method="POST")
           except Exception as exc:
-              print(f"GraphQL thread resolution note: {exc}")
+              print(f"Thread resolution note: {exc}")
 
-          # 5. Build Top Level Body with Quick Actions, Repowise Health & Single Consolidated Prompt
+          # 8. Build clean review body (no competitor names)
           health = parsed.get("health_score", {})
           h_before = float(health.get("before", 9.15))
           h_after = float(health.get("after", round(max(5.0, h_before - 0.02 * len(findings)), 2)))
           delta = float(health.get("delta", round(h_after - h_before, 2)))
           rating = health.get("rating") or ("Healthy" if h_after >= 8.5 else "Moderate" if h_after >= 7.0 else "Needs Attention")
           rating_icon = "🟢" if h_after >= 8.5 else "🟡" if h_after >= 7.0 else "🔴"
-          test_est = parsed.get("test_estimate") or f"{len(parsed.get('walkthrough_table', []))} file(s) touched. Tests estimated based on diff."
-          hygiene_notes = parsed.get("hygiene_notes", [])
+          test_est = parsed.get("test_estimate") or f"{len(changed_files)} file(s) touched."
 
           body_lines = [
-              f"<!-- hermes-ai-review:v3 " + json.dumps({"commit": commit_sha[:8], "health": h_after, "delta": delta, "rating": rating}) + " -->",
+              f"<!-- hermes-ai-review:v4 " + json.dumps({"commit": commit_sha[:8], "mode": review_mode, "health": h_after, "autofixes": len(autocommitted_notes)}) + " -->",
               "> [!NOTE]",
-              "> 🤖 **Automated Code Review by Private Fleet AI**  ",
-              "> **Reviewer:** [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent) on behalf of maintainer @FaserF  ",
-              "> **Engine:** OmniRoute (`" + model + "`) · 100% Repowise, CodeRabbit & GitDocify Parity  ",
-              "> *This automated review assists maintainers with quality gates. Maintainers make the final merge decision.*\n",
-              "### ⚡ Quick Actions & Bot Controls",
-              "- [ ] 🔄 Request re-review (`@faserf-hermes-agent review` / `@faserf-hermes-agent recheck`)",
-              "- [ ] 📚 Update docs & README (`@faserf-hermes-agent doc`)",
-              "- [ ] ⚡ Auto-fix all findings via OpenHands (`@faserf-hermes-agent resolve`)",
-              "- [ ] ⏸️ Pause automated reviews\n",
-              "### 📊 Codebase Health & Test Coverage (Repowise Parity)",
-              f"**Health of changed files: `{h_before:.2f} → {h_after:.2f} ({delta:+.2f})`** · Rating: {rating_icon} **{rating}**  ",
-              f"* **Tests (estimate):** {test_est}",
+              "> 🤖 **Automated Code Review by Hermes Fleet AI**  ",
+              "> **Reviewer:** [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent) on behalf of @FaserF  ",
+              f"> **Engine:** OmniRoute (`{routed_model}` · `{review_mode}`) · Adaptive Code Intelligence  ",
+              "> *Maintainers make the final merge decision.*\n",
           ]
           if secret_findings:
-              body_lines.insert(6, f"> [!CAUTION]\n> 🚨 **SECURITY ALERT:** {len(secret_findings)} exposed credential(s) detected in this PR diff! Approval blocked until rotated and purged.\n")
-          if hygiene_notes:
-              body_lines.append(f"* **Worth a look:** {'; '.join(hygiene_notes[:4])}")
+              body_lines.append(f"> [!CAUTION]\n> 🚨 **SECURITY ALERT:** {len(secret_findings)} exposed credential(s) detected in this PR diff! Approval blocked until rotated and purged.\n")
+          if autocommitted_notes:
+              body_lines.append("### 🛠️ Auto-Committed Safe Fixes")
+              for note in autocommitted_notes:
+                  body_lines.append(f"- {note}")
+              body_lines.append("")
+          if review_mode != "fast-docs":
+              body_lines.extend([
+                  "### 📊 Codebase Health & Test Coverage",
+                  f"**Health of changed files: `{h_before:.2f} → {h_after:.2f} ({delta:+.2f})`** · Rating: {rating_icon} **{rating}**  ",
+                  f"* **Tests (estimate):** {test_est}",
+              ])
+              if parsed.get("hygiene_notes"):
+                  body_lines.append(f"* **Worth a look:** {'; '.join(parsed['hygiene_notes'][:4])}")
+              body_lines.append("")
           if is_diff_truncated:
-              body_lines.append(f"> ⚠️ **Large Diff Truncated:** Changes exceeded the 64KB single-turn threshold ({len(diff_text)} bytes). The review covers the first 64KB; critical changes beyond this threshold should receive manual maintainer verification.")
-          body_lines.append("")
-          if coderabbit_present and cr_comments and not skip_or_limited:
-              body_lines.append(f"### 🤝 CodeRabbit Co-Review Reconciliation\n- **Analysis:** Reconciled {len(cr_comments)} existing CodeRabbit comment(s). Zero duplicate findings posted.\n- **Complementary Findings:** {len(findings)} new item(s) identified below.\n")
+              body_lines.append(f"> ⚠️ **Large Diff Truncated:** Changes exceeded {max_diff_len} bytes ({len(diff_text)} bytes total).\n")
+
           body_lines.append("## Findings")
           if findings:
               for f in findings:
                   body_lines.append(f"- **`{f.get('path')}:{f.get('line')}`**: **{f.get('title')}** ({f.get('severity', 'Minor')})")
               body_lines.append("")
           else:
-              body_lines.append("✅ **No defects detected.** All changes adhere to fleet hygiene and health standards.\n")
+              body_lines.append("✅ **No remaining defects detected.**\n")
 
-          # Walkthrough
-          body_lines.append("<details><summary><strong>Walkthrough</strong></summary><dl><dd>\n")
-          body_lines.append(parsed.get("short_summary", "") + "\n\n| File | Summary |\n|:---|:---|")
-          for w in parsed.get("walkthrough_table", []):
-              body_lines.append(f"| `{w.get('file')}` | {w.get('summary')} |")
-          body_lines.append("\n</dd></dl></details>\n")
+          if review_mode == "deep-code" and parsed.get("walkthrough_table"):
+              body_lines.append("<details><summary><strong>Walkthrough</strong></summary><dl><dd>\n")
+              body_lines.append(parsed.get("short_summary", "") + "\n\n| File | Summary |\n|:---|:---|")
+              for w in parsed.get("walkthrough_table", [])[:15]:
+                  body_lines.append(f"| `{w.get('file')}` | {w.get('summary')} |")
+              body_lines.append("\n</dd></dl></details>\n")
+          elif parsed.get("short_summary"):
+              body_lines.append(f"**Summary:** {parsed['short_summary']}\n")
 
-          # Single consolidated copy prompt at end of walkthrough
           if findings:
-              task_items = []
-              for i, f in enumerate(findings, 1):
-                  desc = f.get("agent_prompt") or f.get("body", "")
-                  task_items.append(f"{i}. File `{f.get('path')}` (line {f.get('line')}): {f.get('title')}\n   Action: {desc}")
+              task_items = [
+                  f"{i}. `{f.get('path')}:{f.get('line')}` — {f.get('title')}: {f.get('agent_prompt') or f.get('body', '')}"
+                  for i, f in enumerate(findings, 1)
+              ]
               body_lines.extend([
-                  "<details><summary>🤖 <strong>Prompt for AI Agent (Copy & Paste to fix all active findings)</strong></summary><dl><dd>\n",
-                  "```markdown\nReview findings to fix on this PR:\n" + "\n".join(task_items) + "\n\nInstructions for AI Agent:\n" +
-                  "1. Fix only still-valid issues listed above; keep changes minimal.\n" +
-                  "2. Ensure source files stay <= 600 lines; preserve exception tracebacks (no `except: pass`, no `raise e`).\n" +
-                  "3. Run existing tests and linting to verify fixes pass before committing.\n" +
-                  "4. Commit with conventional commit format (e.g. `fix: address PR review findings`).\n```\n</dd></dl></details>\n"
+                  "<details><summary>🤖 <strong>Prompt for AI Agent (Fix Remaining Findings)</strong></summary><dl><dd>\n",
+                  "```markdown\n" + "\n".join(task_items) + "\n```\n</dd></dl></details>\n",
               ])
 
-          body_lines.append("---\n**Decision:** `" + event + "` | **Reviewer:** FaserF Hermes Agent Bot")
+          body_lines.extend([
+              "### ⚡ Quick Actions",
+              "- [ ] 🔄 Re-run review (`@faserf-hermes-agent review`) · 📚 Update docs (`@faserf-hermes-agent doc`) · ⚡ Auto-fix (`@faserf-hermes-agent resolve`)",
+              "---\n**Decision:** `" + event + "` | **Reviewer:** faserf-hermes-agent[bot]",
+          ])
           top_body = "\n".join(body_lines)
 
-          # 6. Build Inline Comments with ```suggestion blocks
+          # 9. Inline comments & submit
           inline_comments = []
           for f in findings:
               p, l = f.get("path"), int(f.get("line") or 1)
-              comment_lines = [
-                  "<!-- hermes-ai-generated:v2 -->\n",
-                  f"**{f.get('severity', 'Minor')}** · **{f.get('title')}**\n",
-                  f.get("body", "").strip(),
-              ]
+              c_lines = ["<!-- hermes-ai-generated:v2 -->\n", f"**{f.get('severity', 'Minor')}** · **{f.get('title')}**\n", f.get("body", "").strip()]
               diff = f.get("suggested_diff", "").strip()
               if diff:
                   clean = [ln[1:] if ln.startswith("+") else ln for ln in diff.splitlines() if not ln.startswith("```") and not ln.startswith("-")]
                   sugg = "\n".join(clean).strip()
                   if sugg:
-                      comment_lines.append(f"\n```suggestion\n{sugg}\n```")
-              inline_comments.append({"path": p, "line": l, "side": "RIGHT", "body": "\n".join(comment_lines)})
+                      c_lines.append(f"\n```suggestion\n{sugg}\n```")
+              inline_comments.append({"path": p, "line": l, "side": "RIGHT", "body": "\n".join(c_lines)})
 
-          # 7. Submit Review
           review_payload = {"commit_id": commit_sha, "body": top_body, "event": event}
           if inline_comments:
               review_payload["comments"] = inline_comments
 
-          submit_req = urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/reviews", headers=headers, data=json.dumps(review_payload).encode())
           try:
-              urllib.request.urlopen(submit_req)
-              print(f"Submitted PR review on #{pr_num} ({event}) with {len(inline_comments)} inline findings.")
+              gh_json(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/reviews", review_payload, method="POST")
           except urllib.error.HTTPError as he:
               print(f"Batch review fallback: {he.code}")
-              fallback = {"commit_id": commit_sha, "body": top_body, "event": event}
-              urllib.request.urlopen(urllib.request.Request(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/reviews", headers=headers, data=json.dumps(fallback).encode()))
+              gh_json(f"https://api.github.com/repos/{repo}/pulls/{pr_num}/reviews", {"commit_id": commit_sha, "body": top_body, "event": event}, method="POST")
 
-          # 8. Update in-place status comment to finished
           elapsed = int(time.time() - start_time)
-          done_body = f"{marker}\n> ✅ **FaserF Hermes Agent Reviewer:** Review completed in `{elapsed}s`.  \n> **Verdict:** `{event}` ({len(findings)} findings, {len(inline_comments)} inline suggestions) · Co-Review: {'CodeRabbit Reconciled' if cr_comments else 'Independent Analysis'}"
+          done_body = (
+              f"{marker}\n> ✅ **FaserF Hermes Agent Reviewer:** Completed in `{elapsed}s` (`{review_mode}`).  \n"
+              f"> **Verdict:** `{event}` ({len(findings)} findings, {len(autocommitted_notes)} auto-committed fixes)"
+          )
           try:
               if status_cid:
-                  req_done = urllib.request.Request(f"https://api.github.com/repos/{repo}/issues/comments/{status_cid}", headers=headers, data=json.dumps({"body": done_body}).encode(), method="PATCH")
-                  urllib.request.urlopen(req_done, timeout=10)
+                  gh_json(f"https://api.github.com/repos/{repo}/issues/comments/{status_cid}", {"body": done_body}, method="PATCH")
           except Exception as exc:
               print(f"Status finish note: {exc}")
           EOF
@@ -447,9 +548,11 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           IS_FORK: ${{ github.event.pull_request.head.repo.fork == true }}
           BOT_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_OPENHANDS_API_KEY || secrets.OMNIROUTE_API_KEY }}
           OMNIROUTE_BASE_URL: ${{ inputs.omniroute_base_url != '' && inputs.omniroute_base_url || secrets.OMNIROUTE_BASE_URL }}
-          CODERABBIT_API_KEY: ${{ secrets.CODERABBIT_API_KEY }}
           MODEL: ${{ inputs.model }}
+          ALLOW_AUTOCOMMIT: ${{ inputs.auto_commit_safe_fixes }}
+          SAME_REPO_PR: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
-          python run_pr_review.py || true
+          python /tmp/run_pr_review.py || true

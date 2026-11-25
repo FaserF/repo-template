@@ -33,8 +33,12 @@ jobs:
     name: OpenHands Autonomous Solver
     timeout-minutes: ${{ inputs.timeout_minutes || 45 }}
     if: |
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'pull_request' && !startsWith(github.event.workflow_run.head_branch, 'openhands/'))
+      github.actor != 'faserf-hermes-agent[bot]' &&
+      !endsWith(github.actor, '[bot]') &&
+      !startsWith(github.actor, 'app/') &&
+      (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'pull_request' && !startsWith(github.event.workflow_run.head_branch, 'openhands/'))) &&
+      (github.event.pull_request == null || (!startsWith(github.event.pull_request.head.ref, 'renovate/') && !startsWith(github.event.pull_request.head.ref, 'dependabot/') && !endsWith(github.event.pull_request.user.login, '[bot]'))) &&
+      (github.event.issue == null || (github.event.issue.user.type != 'Bot' && !endsWith(github.event.issue.user.login, '[bot]') && !startsWith(github.event.issue.user.login, 'app/') && !contains(github.event.issue.title, 'Dependency Dashboard') && !contains(github.event.issue.title, 'Renovate') && !contains(github.event.issue.title, 'Dependabot')))
     runs-on: ${{ inputs.runner == 'ubuntu-latest' && 'ubuntu-latest' || ((inputs.runner == 'self-hosted' || github.event.repository.private == true || vars.FORCE_SELF_HOSTED_RUNNER == 'true' || vars.USE_SELF_HOSTED_RUNNERS == 'true' || vars.USE_GITHUB_RUNNERS == 'false') && fromJSON('["self-hosted", "linux"]') || 'ubuntu-latest') }}
     permissions:
       contents: write

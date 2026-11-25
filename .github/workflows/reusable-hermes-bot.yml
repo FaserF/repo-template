@@ -58,9 +58,9 @@ jobs:
               return;
             }
 
-            const issueTitle = (payload.issue ? payload.issue.title : (payload.pull_request ? payload.pull_request.title : "")) || "";
-            if (/dependency dashboard|renovate|dependabot/i.test(issueTitle)) {
-              console.log(`Skipping dependency dashboard / automated bot issue: "${issueTitle}"`);
+            const headRef = (payload.pull_request && payload.pull_request.head ? payload.pull_request.head.ref : "");
+            if (/dependency dashboard|renovate|dependabot/i.test(issueTitle) || /^(renovate|dependabot)\//i.test(headRef)) {
+              console.log(`Skipping dependency dashboard / automated bot PR: "${issueTitle}"`);
               return;
             }
 
@@ -149,8 +149,8 @@ jobs:
                 `> 🤖 **FaserF Hermes Agent Bot Commands & Permissions**  \n` +
                 `> Provided by [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)  \n\n` +
                 `**Public Commands (Anyone):**\n` +
-                `* \`@faserf-hermes-agent review\` (aliases: \`recheck\`, \`deep\`, \`/review\`, \`/recheck\`) — Trigger re-review & Repowise health analysis.\n` +
-                `* \`@faserf-hermes-agent doc\` (aliases: \`docs\`, \`document\`, \`/doc\`) — Sync and update documentation & README (GitDocify parity).\n` +
+                `* \`@faserf-hermes-agent review\` (aliases: \`recheck\`, \`deep\`, \`/review\`, \`/recheck\`) — Trigger re-review & codebase health analysis.\n` +
+                `* \`@faserf-hermes-agent doc\` (aliases: \`docs\`, \`document\`, \`/doc\`) — Sync and update documentation & README.\n` +
                 `* PR title \`[skip hermes]\` / \`[skip review]\` — Skip automated review on this PR.\n` +
                 `* \`@faserf-hermes-agent help\` — Display this command reference.\n\n` +
                 `**Restricted Maintainer Actions (${adminListText}):**\n` +
@@ -241,7 +241,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: issueNumber,
-                body: `> 📚 **Hermes Documentation Engine (GitDocify Parity):** Documentation generation/sync scheduled for #${issueNumber} by @${sender}. Agent is inspecting codebase and updating README/docs.`
+                body: `> 📚 **Hermes Documentation Engine:** Documentation generation/sync scheduled for #${issueNumber} by @${sender}. Agent is inspecting codebase and updating README/docs.`
               });
               return;
             }
