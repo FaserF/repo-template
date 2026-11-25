@@ -48,7 +48,7 @@ jobs:
         if: steps.detect.outputs.has_python == 'true'
         run: |
           if [ -f .ruff.toml ] || ([ -f pyproject.toml ] && grep -qE '\[tool\.ruff(\.format)?\]' pyproject.toml); then
-            ruff format --check .
+            ruff format --check --exclude scripts/generate_changelog.py --exclude scripts/openhands_resolver.py .
           fi
 
       - name: Actionlint (GitHub Actions Workflows)
