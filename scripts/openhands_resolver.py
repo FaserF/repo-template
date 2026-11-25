@@ -566,8 +566,7 @@ def main() -> int:
 
     if has_unresolved_conflicts():
         run_cmd(["git", "merge", "--abort"])
-        msg = "Aborted: unresolved merge conflict markers remained."
-        write_outcome("blocked", msg)
+        write_outcome("blocked", "Aborted: unresolved merge conflict markers remained.")
         return 1
 
     if has_git_changes() and status == "resolved":
@@ -587,6 +586,7 @@ def main() -> int:
             write_outcome("blocked", f"git push failed: {p_err}")
             return 1
         if not is_pr:
+            pr_body = f"Closes #{number}\n\n{summary}\n\nAutomated verified fix by OpenHands & Hermes Fleet AI."
             run_cmd(
                 [
                     "gh",
@@ -595,7 +595,7 @@ def main() -> int:
                     "--title",
                     f"fix: resolve #{number} - {title}",
                     "--body",
-                    f"Closes #{number}\n\n{summary}\n\nAutomated verified fix by OpenHands & Hermes Fleet AI.",
+                    pr_body,
                     "--head",
                     target_branch,
                     "--base",
