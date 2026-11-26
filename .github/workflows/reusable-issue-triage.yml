@@ -85,8 +85,9 @@ jobs:
             }
 
             // 2. Extract versions and content from issue body
-            const versionMatch = issueBody.match(/(?:Version|Release)[\s\S]*?(?:###|\n\n)([\w\.\-]+)/i) || issueBody.match(/\b\d+\.\d+\.\d+(?:[a-z0-9\.\-]+)?\b/);
-            const reportedVersion = versionMatch ? versionMatch[1] || versionMatch[0] : "Not explicitly specified";
+            const versionHeadingMatch = issueBody.match(/(?:^|\n)(?:#{1,4}\s*.*?(?:Integration\s+Version|App\s+Version|Plugin\s+Version|Version\s*\/\s*Release|Version|Release)\b[^\n]*\r?\n+|\*{0,2}(?:Integration\s+Version|App\s+Version|Version|Release)\*{0,2}\s*[:\-]\s*)(?:\s*\r?\n)*`?(v?\d+\.\d+(?:\.\d+)?(?:[-+.]?[a-zA-Z0-9]+)*)`?/i);
+            const versionMatch = versionHeadingMatch || issueBody.match(/\b(v?\d+\.\d+\.\d+(?:[-+.]?[a-zA-Z0-9]+)*)\b/);
+            const reportedVersion = versionMatch ? versionMatch[1] : "Not explicitly specified";
 
             const parseVer = (v) => {
               const m = String(v || "").match(/^v?(\d+)\.(\d+)\.(\d+)(?:[-.]?(a|alpha|b|beta|rc|dev)\.?(\d*))?/i);
@@ -107,9 +108,12 @@ jobs:
 
             const hasLogs = issueBody.includes("```") || /traceback|exception|error|warning|debug/i.test(issueBody);
             const hasSteps = /steps to reproduce|reproduction/i.test(issueBody) && issueBody.length > 80;
-            const isBeta = /(?:^|[-._])(a|alpha|b|beta|rc|dev)\d*\b/i.test(reportedVersion)
-              || /(?:release\s*channel|channel)\s*[:=-]\s*.*?(?:beta|pre-?release|alpha|dev|nightly)/i.test(issueBody)
-              || (latestIsPrerelease && reportedVersion !== "Not explicitly specified" && reportedVersion.replace(/^v/, "") === latestRelease.replace(/^v/, ""));
+            const isBeta = (reportedVersion !== "Not explicitly specified" && (
+              /(?:\d(?:a|alpha|b|beta|rc)\d*\b|(?:^|[-._])(a|alpha|b|beta|rc|dev|nightly)\d*\b)/i.test(reportedVersion)
+              || (latestIsPrerelease && reportedVersion.replace(/^v/i, "") === latestRelease.replace(/^v/i, ""))
+            ))
+              || /-\s*\[[xX]\]\s*[^\n]*(?:beta|pre-?release|alpha|dev|nightly)/i.test(issueBody)
+              || /(?:release\s*channel|channel)\s*[:=-]\s*[^\n]*(?:beta|pre-?release|alpha|dev|nightly)/i.test(issueBody);
 
             const isBug = labels.includes("bug") || /bug|crash|fail|broken/i.test(issueTitle);
             const isFeature = labels.includes("enhancement") || /feature|request|proposal/i.test(issueTitle);

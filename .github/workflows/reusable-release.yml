@@ -72,6 +72,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          ref: ${{ inputs.tag_name || '' }}
           fetch-depth: 0
 
       - name: Setup Python
@@ -134,8 +135,20 @@ jobs:
           git push origin "$TARGET_TAG" --force
           echo "created_tag=${TARGET_TAG}" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout Re-Release Tag
+        if: inputs.re_release == true && steps.meta.outputs.tag != ''
+        env:
+          TARGET_TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        run: |
+          if git rev-parse -q --verify "refs/tags/${TARGET_TAG}" >/dev/null; then
+            git checkout "$TARGET_TAG"
+          fi
+
       - name: Package HACS Zip Release
         id: hacs-zip
+        env:
+          TARGET_VER: ${{ steps.meta.outputs.version }}
         shell: bash
         run: |
           python3 - <<'PY'
@@ -148,7 +161,14 @@ jobs:
               if hacs_cfg.get("zip_release"):
                   manifests = glob.glob("custom_components/*/manifest.json")
                   if manifests:
-                      domain = json.loads(Path(manifests[0]).read_text(encoding="utf-8"))["domain"]
+                      manifest_data = json.loads(Path(manifests[0]).read_text(encoding="utf-8"))
+                      domain = manifest_data["domain"]
+                      expected_ver = os.environ.get("TARGET_VER", "").lstrip("vV")
+                      actual_ver = str(manifest_data.get("version", "")).lstrip("vV")
+                      if expected_ver and actual_ver != expected_ver:
+                          raise SystemExit(
+                              f"Manifest version mismatch in {manifests[0]}: expected {expected_ver!r}, found {actual_ver!r}"
+                          )
                       zip_name = hacs_cfg.get("filename") or f"{domain}.zip"
                       comp_dir = Path(manifests[0]).parent
                       with zipfile.ZipFile(zip_name, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -156,7 +176,7 @@ jobs:
                               if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc":
                                   zf.write(p, p.relative_to(comp_dir))
                       files_out = zip_name
-                      print(f"Packaged HACS release archive: {zip_name}")
+                      print(f"Packaged HACS release archive: {zip_name} (version {actual_ver})")
           if gh_out := os.environ.get("GITHUB_OUTPUT"):
               with open(gh_out, "a", encoding="utf-8") as fh:
                   fh.write(f"files={files_out}\n")

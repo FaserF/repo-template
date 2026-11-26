@@ -411,6 +411,10 @@ def sync_repository(repo_full_name: str, apply: bool = True) -> bool:
             )
             and (workflows_dir / "linter.yml").exists()
             and (workflows_dir / "pr-reviewer.yml").exists()
+            and "contents: write"
+            in (workflows_dir / "pr-reviewer.yml").read_text(
+                encoding="utf-8", errors="ignore"
+            )
             and release_yml.exists()
             and "re_release" in release_yml.read_text(encoding="utf-8", errors="ignore")
             and "version_override"
