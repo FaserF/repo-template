@@ -362,27 +362,40 @@ def call_omniroute(
     model: str,
     messages: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Call OmniRoute OpenAI-compatible chat completions endpoint."""
+    """Call OmniRoute OpenAI-compatible chat completions endpoint with model fallback."""
     url = f"{base_url.rstrip('/')}/chat/completions"
-    payload = {
-        "model": model,
-        "messages": messages,
-        "tools": TOOLS,
-        "tool_choice": "auto",
-        "temperature": 0.1,
-    }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "FaserF-OpenHands-Resolver",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=180) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    candidates = list(dict.fromkeys([model, "fast-cascade", "auto/smart"]))
+    last_exc: Exception | None = None
+    for candidate_model in candidates:
+        payload = {
+            "model": candidate_model,
+            "messages": messages,
+            "tools": TOOLS,
+            "tool_choice": "auto",
+            "temperature": 0.1,
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "FaserF-OpenHands-Resolver",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=75) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            last_exc = exc
+            if exc.code < 500 and exc.code != 429:
+                raise
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_exc = exc
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("No OmniRoute candidate models available")
 
 
 def run_agent_loop(
