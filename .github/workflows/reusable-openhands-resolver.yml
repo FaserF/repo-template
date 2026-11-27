@@ -141,31 +141,6 @@ jobs:
           git config --global user.name "faserf-hermes-agent[bot]"
           git config --global user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
 
-      - name: Acknowledge Resolution Start
-        id: ack
-        if: steps.target.outputs.number != '0'
-        uses: actions/github-script@v9
-        with:
-          github-token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
-          script: |
-            const targetNum = parseInt("${{ steps.target.outputs.number }}", 10);
-            const isPR = "${{ steps.target.outputs.is_pr }}" === "true";
-            const targetType = isPR ? "Pull Request" : "Issue";
-            try {
-              const res = await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: targetNum,
-                body: `<!-- hermes-openhands-status -->\n> [!TIP]\n` +
-                  `> 🛠️ **OpenHands Autonomous Solver Started (${targetType} #${targetNum})**  \n` +
-                  `> **Engine:** \`${{ inputs.model }}\` via OmniRoute  \n` +
-                  `> Inspecting logs/review comments, applying test-verified fixes, and validating checks.`
-              });
-              core.setOutput("comment_id", String(res.data.id));
-            } catch (err) {
-              console.warn(`Non-fatal acknowledge comment failure: ${err.message}`);
-            }
-
       - name: Setup Python
         if: steps.target.outputs.number != '0'
         uses: actions/setup-python@v7
@@ -218,17 +193,28 @@ jobs:
               });
             } catch (e) {}
 
-            const ackCommentId = parseInt("${{ steps.ack.outputs.comment_id || '0' }}", 10);
             const badge = status === "resolved" ? "✅ **OpenHands Autonomous Resolution Complete**" :
                           status === "no_changes" ? "ℹ️ **OpenHands Inspection Complete (No Changes Needed)**" :
                           "⚠️ **OpenHands Autonomous Solver Blocked / Incomplete**";
+            await core.summary.addRaw(`### ${badge}\n${summary}\n`).write();
+            if (status !== "resolved") {
+              core.warning(`OpenHands solver ended with status=${status}: ${summary}`);
+              return;
+            }
             const finalBody = `<!-- hermes-openhands-status -->\n> [!NOTE]\n> ${badge}  \n> ${summary}`;
             try {
-              if (ackCommentId > 0) {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: targetNum,
+                per_page: 50
+              });
+              const existing = comments.find(c => (c.body || "").includes("<!-- hermes-openhands-status -->"));
+              if (existing) {
                 await github.rest.issues.updateComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
-                  comment_id: ackCommentId,
+                  comment_id: existing.id,
                   body: finalBody
                 });
               } else {
