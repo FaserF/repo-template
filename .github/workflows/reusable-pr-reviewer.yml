@@ -166,6 +166,8 @@ jobs:
           commit_sha = (pr_data.get("head") or {}).get("sha", "")
           head_ref = (pr_data.get("head") or {}).get("ref", "")
           pr_title = pr_data.get("title", "")
+          pr_author = ((pr_data.get("user") or {}).get("login") or "").lower()
+          is_self_dev = pr_author in {"faserf", "faserf-hermes-agent", "faserf-hermes-agent[bot]", "app/faserf-hermes-agent"}
 
           if any(m in pr_title.lower() for m in ("[skip hermes]", "[skip review]", "[skip ci]")):
               print(f"Skipping review due to title marker: {pr_title}")
@@ -328,6 +330,7 @@ jobs:
           ```"""
 
           parsed = {"event": "COMMENT", "short_summary": "Automated review complete.", "findings": []}
+          omniroute_failed = False
           if omniroute_key and not secret_findings:
               try:
                   llm_req = urllib.request.Request(
@@ -351,7 +354,8 @@ jobs:
                   parsed = json.loads(raw_out)
               except Exception as exc:
                   print(f"OmniRoute review generation skipped: {exc}")
-                  parsed = {"event": "COMMENT", "short_summary": f"Automated hygiene check note: {exc}", "findings": []}
+                  omniroute_failed = True
+                  parsed = {"event": "COMMENT", "short_summary": "", "findings": []}
 
           # 6. Apply safe, verified LLM micro-fixes on writable branches
           remaining_findings = list(secret_findings)
@@ -442,6 +446,18 @@ jobs:
           except Exception as exc:
               print(f"Thread resolution note: {exc}")
 
+          if omniroute_failed and not secret_findings and not autocommitted_notes:
+              if status_cid:
+                  try:
+                      gh_json(
+                          f"https://api.github.com/repos/{repo}/issues/comments/{status_cid}",
+                          {"body": f"{marker}\n> ℹ️ **FaserF Hermes Agent Reviewer:** AI review skipped (upstream unavailable); deterministic secret/hygiene checks passed."},
+                          method="PATCH",
+                      )
+                  except Exception as exc:
+                      print(f"Status skip note: {exc}")
+              sys.exit(0)
+
           # 8. Build clean review body (no competitor names)
           health = parsed.get("health_score", {})
           h_before = float(health.get("before", 9.15))
@@ -451,14 +467,21 @@ jobs:
           rating_icon = "🟢" if h_after >= 8.5 else "🟡" if h_after >= 7.0 else "🔴"
           test_est = parsed.get("test_estimate") or f"{len(changed_files)} file(s) touched."
 
+          reviewer_line = (
+              "> **Reviewer:** [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent)  "
+              if is_self_dev
+              else "> **Reviewer:** [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent) on behalf of @FaserF  "
+          )
           body_lines = [
               f"<!-- hermes-ai-review:v4 " + json.dumps({"commit": commit_sha[:8], "mode": review_mode, "health": h_after, "autofixes": len(autocommitted_notes)}) + " -->",
               "> [!NOTE]",
               "> 🤖 **Automated Code Review by Hermes Fleet AI**  ",
-              "> **Reviewer:** [faserf-hermes-agent[bot]](https://github.com/apps/faserf-hermes-agent) on behalf of @FaserF  ",
-              f"> **Engine:** OmniRoute (`{routed_model}` · `{review_mode}`) · Adaptive Code Intelligence  ",
-              "> *Maintainers make the final merge decision.*\n",
+              reviewer_line,
+              f"> **Engine:** OmniRoute (`{routed_model}` · `{review_mode}`) · Adaptive Code Intelligence" + ("" if is_self_dev else "  "),
           ]
+          if not is_self_dev:
+              body_lines.append("> *Maintainers make the final merge decision.*")
+          body_lines.append("")
           if secret_findings:
               body_lines.append(f"> [!CAUTION]\n> 🚨 **SECURITY ALERT:** {len(secret_findings)} exposed credential(s) detected in this PR diff! Approval blocked until rotated and purged.\n")
           if autocommitted_notes:

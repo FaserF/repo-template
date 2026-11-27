@@ -141,6 +141,7 @@ jobs:
           git config --global user.email "342667397+faserf-hermes-agent[bot]@users.noreply.github.com"
 
       - name: Acknowledge Resolution Start
+        id: ack
         if: steps.target.outputs.number != '0'
         uses: actions/github-script@v9
         with:
@@ -150,15 +151,16 @@ jobs:
             const isPR = "${{ steps.target.outputs.is_pr }}" === "true";
             const targetType = isPR ? "Pull Request" : "Issue";
             try {
-              await github.rest.issues.createComment({
+              const res = await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: targetNum,
-                body: `> [!TIP]\n` +
+                body: `<!-- hermes-openhands-status -->\n> [!TIP]\n` +
                   `> 🛠️ **OpenHands Autonomous Solver Started (${targetType} #${targetNum})**  \n` +
                   `> **Engine:** \`${{ inputs.model }}\` via OmniRoute  \n` +
                   `> Inspecting logs/review comments, applying test-verified fixes, and validating checks.`
               });
+              core.setOutput("comment_id", String(res.data.id));
             } catch (err) {
               console.warn(`Non-fatal acknowledge comment failure: ${err.message}`);
             }
@@ -215,16 +217,27 @@ jobs:
               });
             } catch (e) {}
 
+            const ackCommentId = parseInt("${{ steps.ack.outputs.comment_id || '0' }}", 10);
             const badge = status === "resolved" ? "✅ **OpenHands Autonomous Resolution Complete**" :
                           status === "no_changes" ? "ℹ️ **OpenHands Inspection Complete (No Changes Needed)**" :
                           "⚠️ **OpenHands Autonomous Solver Blocked / Incomplete**";
+            const finalBody = `<!-- hermes-openhands-status -->\n> [!NOTE]\n> ${badge}  \n> ${summary}`;
             try {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: targetNum,
-                body: `> [!NOTE]\n> ${badge}  \n> ${summary}`
-              });
+              if (ackCommentId > 0) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: ackCommentId,
+                  body: finalBody
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: targetNum,
+                  body: finalBody
+                });
+              }
             } catch (err) {
               console.warn(`Non-fatal summary comment failure: ${err.message}`);
             }

@@ -18,11 +18,14 @@ jobs:
     timeout-minutes: 5
     if: |
       github.actor != 'faserf-hermes-agent[bot]' &&
+      github.actor != github.repository_owner &&
       !endsWith(github.actor, '[bot]') &&
       !startsWith(github.actor, 'app/') &&
       github.event.issue.user.type != 'Bot' &&
+      github.event.issue.user.login != github.repository_owner &&
       !endsWith(github.event.issue.user.login, '[bot]') &&
       !startsWith(github.event.issue.user.login, 'app/') &&
+      !startsWith(github.event.issue.title, 'CI failure:') &&
       !contains(github.event.issue.title, 'Dependency Dashboard') &&
       !contains(github.event.issue.title, 'Renovate') &&
       !contains(github.event.issue.title, 'Dependabot')
@@ -55,21 +58,23 @@ jobs:
             const issueTitle = issue.title || "";
             const issueBody = issue.body || "";
 
-            // STRICT BOT & DEPENDENCY DASHBOARD FILTER:
-            if (authorType === 'Bot' || author.endsWith('[bot]') || author.startsWith('app/') || context.actor.endsWith('[bot]')) {
-              console.log(`Skipping bot issue author: ${author}`);
-              return;
-            }
-            if (/dependency dashboard|renovate|dependabot/i.test(issueTitle)) {
-              console.log(`Skipping dependency dashboard / automated tracker: "${issueTitle}"`);
+            // STRICT OWNER, BOT & DEPENDENCY DASHBOARD FILTER:
+            const repoOwnerLower = context.repo.owner.toLowerCase();
+            if (author === repoOwnerLower || authorType === 'Bot' || author.endsWith('[bot]') || author.startsWith('app/') || context.actor.endsWith('[bot]')) {
+              console.log(`Skipping owner/bot issue author: ${author}`);
               return;
             }
             const labels = issue.labels.map(l => l.name);
+            if (/dependency dashboard|renovate|dependabot|^ci failure:/i.test(issueTitle) || labels.includes('ci-failure')) {
+              console.log(`Skipping dependency dashboard / operational tracker: "${issueTitle}"`);
+              return;
+            }
 
-            // 1. Fetch latest release details
+            // 1. Fetch latest release details (with monorepo add-on config.yaml fallback)
             let latestRelease = "none";
             let latestDate = "n/a";
             let latestIsPrerelease = false;
+            let matchedAddon = "";
             try {
               const rel = await github.rest.repos.getLatestRelease({
                 owner: context.repo.owner,
@@ -81,7 +86,44 @@ jobs:
                 latestIsPrerelease = Boolean(rel.data.prerelease);
               }
             } catch (e) {
-              // No release found
+              // No top-level release found; check if this is an add-on monorepo
+              try {
+                const manifestRes = await github.rest.repos.getContent({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  path: "project_manifest.json"
+                });
+                const manifest = JSON.parse(Buffer.from(manifestRes.data.content, "base64").toString("utf8"));
+                const apps = Object.keys(manifest.apps || manifest || {});
+                const haystack = `${issueTitle}\n${issueBody}\n${labels.join(" ")}`.toLowerCase();
+                const appLabel = labels.find(l => l.toLowerCase().startsWith("app/"));
+                if (appLabel) {
+                  const cand = appLabel.slice(4).toLowerCase();
+                  if (apps.includes(cand)) matchedAddon = cand;
+                }
+                if (!matchedAddon) {
+                  // Prefer longest slug match to distinguish e.g. apache2-minimal-mariadb vs apache2
+                  const sorted = [...apps].sort((a, b) => b.length - a.length);
+                  matchedAddon = sorted.find(slug => {
+                    const re = new RegExp(`(?:^|[^a-z0-9_-])${slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:$|[^a-z0-9_-])`, "i");
+                    return re.test(haystack);
+                  }) || "";
+                }
+                if (matchedAddon) {
+                  const cfgRes = await github.rest.repos.getContent({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    path: `${matchedAddon}/config.yaml`
+                  });
+                  const cfgText = Buffer.from(cfgRes.data.content, "base64").toString("utf8");
+                  const verM = cfgText.match(/^version:\s*["']?([^"'\s#]+)["']?/m);
+                  if (verM) {
+                    latestRelease = verM[1];
+                  }
+                }
+              } catch (_) {
+                // Not an add-on monorepo or config.yaml unavailable
+              }
             }
 
             // 2. Extract versions and content from issue body
@@ -118,16 +160,27 @@ jobs:
             const isBug = labels.includes("bug") || /bug|crash|fail|broken/i.test(issueTitle);
             const isFeature = labels.includes("enhancement") || /feature|request|proposal/i.test(issueTitle);
 
-            // 3. Assemble Checklist
-            const checkVer = reportedVersion === "Not explicitly specified"
-              ? `[ ] **Reported Version:** Missing or unparsed`
-              : isOutdated
-                ? `[ ] **Reported Version:** \`${reportedVersion}\` (Outdated — latest release is \`${latestRelease}\`)`
+            // 3. Assemble Checklist (tailored to Bug vs Feature Request)
+            const autoOpenhands = Boolean(${{ inputs.auto_openhands }});
+            const checklistItems = [];
+            if (reportedVersion !== "Not explicitly specified") {
+              const verLine = isOutdated
+                ? `[ ] **Reported Version:** \`${reportedVersion}\` (Outdated — latest is \`${latestRelease}\`)`
                 : `[x] **Reported Version:** \`${reportedVersion}\``;
-            const checkLatest = `[x] **Latest Repository Release:** \`${latestRelease}\` (published: ${latestDate})`;
-            const checkLogs = hasLogs ? `[x] **Diagnostic Logs:** Provided in report` : `[ ] **Diagnostic Logs:** Not detected. (Debug logs speed up resolution)`;
-            const checkSteps = hasSteps ? `[x] **Reproduction Steps:** Included` : `[ ] **Reproduction Steps:** Incomplete or missing`;
-            const checkBeta = isBeta ? `[x] **Release Channel:** Pre-release / Beta channel` : `[x] **Release Channel:** Stable channel`;
+              checklistItems.push(verLine);
+            } else if (isBug && !isFeature) {
+              checklistItems.push(`[ ] **Reported Version:** Missing or unparsed`);
+            }
+            if (latestRelease !== "none") {
+              const releaseLabel = matchedAddon ? `Latest Add-on Version (\`${matchedAddon}\`)` : `Latest Repository Release`;
+              const dateSuffix = latestDate !== "n/a" ? ` (published: ${latestDate})` : "";
+              checklistItems.push(`[x] **${releaseLabel}:** \`${latestRelease}\`${dateSuffix}`);
+            }
+            if (isBug && !isFeature) {
+              checklistItems.push(`[x] **Release Channel:** ${isBeta ? "Pre-release / Beta channel" : "Stable channel"}`);
+              checklistItems.push(hasLogs ? `[x] **Diagnostic Logs:** Provided in report` : `[ ] **Diagnostic Logs:** Not detected (debug logs speed up resolution)`);
+              checklistItems.push(hasSteps ? `[x] **Reproduction Steps:** Included` : `[ ] **Reproduction Steps:** Incomplete or missing`);
+            }
 
             const usedAppToken = Boolean("${{ steps.app-token.outputs.token }}");
             if (!usedAppToken) {
@@ -143,31 +196,38 @@ jobs:
             triageBody += `> *Automated analysis to assist maintainers with triage and reproduction.*  \n\n`;
 
             triageBody += `Hi @${issue.user.login}, thanks for opening this issue! 👋\n\n`;
-            triageBody += `### Initial Verification Checklist\n`;
-            triageBody += `- ${checkVer}\n`;
-            triageBody += `- ${checkLatest}\n`;
-            triageBody += `- ${checkBeta}\n`;
-            triageBody += `- ${checkLogs}\n`;
-            triageBody += `- ${checkSteps}\n\n`;
+            if (checklistItems.length > 0) {
+              triageBody += `### Initial Verification Checklist\n`;
+              triageBody += checklistItems.map(item => `- ${item}`).join("\n") + "\n\n";
+            }
 
             if (isOutdated) {
-              triageBody += `> [!WARNING]\n> **Outdated Version Reported:** You reported \`${reportedVersion}\`, while the latest release is \`${latestRelease}\` (published: ${latestDate}). Please update to the latest version first and verify whether the issue persists.\n\n`;
+              const dateNote = latestDate !== "n/a" ? ` (published: ${latestDate})` : "";
+              triageBody += `> [!WARNING]\n> **Outdated Version Reported:** You reported \`${reportedVersion}\`, while the latest version is \`${latestRelease}\`${dateNote}. Please update to the latest version first and verify whether the issue persists.\n\n`;
             }
 
             const labelsToAdd = [];
 
-            if (isBug && !hasLogs && !hasSteps) {
+            if (isBug && !isFeature && !hasLogs && !hasSteps) {
               triageBody += `⚠️ **Limited Diagnostics Detected:**  \n`;
-              triageBody += `Autonomous solver queued anyway; please add debug logs or repro steps if extra context is needed.\n\n`;
+              triageBody += autoOpenhands
+                ? `Autonomous solver queued anyway; please add debug logs or repro steps if extra context is needed.\n\n`
+                : `Please add debug logs or reproduction steps so maintainers can investigate.\n\n`;
               labelsToAdd.push("waiting-for-info");
-            } else if (isBug) {
-              triageBody += `✅ **Issue Verified:** Sufficient diagnostics detected. Queued for autonomous OpenHands resolution & PR creation.\n\n`;
+            } else if (isBug && !isFeature) {
+              triageBody += autoOpenhands
+                ? `✅ **Issue Verified:** Sufficient diagnostics detected. Queued for autonomous OpenHands resolution & PR creation.\n\n`
+                : `✅ **Issue Verified:** Sufficient diagnostics detected for maintainer review.\n\n`;
             } else if (isFeature) {
-              triageBody += `💡 **Feature Proposal Received:** Queued for autonomous OpenHands evaluation & implementation.\n\n`;
+              triageBody += autoOpenhands
+                ? `💡 **Feature Proposal Received:** Queued for autonomous OpenHands evaluation & implementation.\n\n`
+                : `💡 **Feature Proposal Received:** Ready for maintainer evaluation.\n\n`;
             } else {
-              triageBody += `🔎 **Issue Received:** Queued for autonomous OpenHands analysis & maintainer review.\n\n`;
+              triageBody += autoOpenhands
+                ? `🔎 **Issue Received:** Queued for autonomous OpenHands analysis & maintainer review.\n\n`
+                : `🔎 **Issue Received:** Ready for maintainer review.\n\n`;
             }
-            if (${{ inputs.auto_openhands }}) {
+            if (autoOpenhands) {
               labelsToAdd.push("openhands:ready");
             }
 
@@ -198,7 +258,8 @@ jobs:
                   method: "POST",
                   headers: {
                     "Authorization": `Bearer ${omniKey}`,
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
+                    "User-Agent": "FaserF-Issue-Triage/1.0"
                   },
                   body: JSON.stringify({
                     model: "auto/smart",

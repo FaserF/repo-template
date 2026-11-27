@@ -58,6 +58,7 @@ jobs:
               return;
             }
 
+            const issueTitle = (payload.issue ? payload.issue.title : (payload.pull_request ? payload.pull_request.title : "")) || "";
             const headRef = (payload.pull_request && payload.pull_request.head ? payload.pull_request.head.ref : "");
             if (/dependency dashboard|renovate|dependabot/i.test(issueTitle) || /^(renovate|dependabot)\//i.test(headRef)) {
               console.log(`Skipping dependency dashboard / automated bot PR: "${issueTitle}"`);
