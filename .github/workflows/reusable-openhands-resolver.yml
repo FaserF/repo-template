@@ -33,9 +33,10 @@ jobs:
     name: OpenHands Autonomous Solver
     timeout-minutes: ${{ inputs.timeout_minutes || 45 }}
     if: |
-      github.actor != 'faserf-hermes-agent[bot]' &&
-      !endsWith(github.actor, '[bot]') &&
-      !startsWith(github.actor, 'app/') &&
+      (
+        ((github.event_name == 'issues' || github.event_name == 'pull_request') && github.event.action == 'labeled' && github.event.label.name == 'openhands:ready') ||
+        (github.actor != 'faserf-hermes-agent[bot]' && !endsWith(github.actor, '[bot]') && !startsWith(github.actor, 'app/'))
+      ) &&
       (github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'failure' && github.event.workflow_run.event == 'pull_request' && !startsWith(github.event.workflow_run.head_branch, 'openhands/'))) &&
       (github.event.pull_request == null || (!startsWith(github.event.pull_request.head.ref, 'renovate/') && !startsWith(github.event.pull_request.head.ref, 'dependabot/') && !endsWith(github.event.pull_request.user.login, '[bot]'))) &&
       (github.event.issue == null || (github.event.issue.user.type != 'Bot' && !endsWith(github.event.issue.user.login, '[bot]') && !startsWith(github.event.issue.user.login, 'app/') && !contains(github.event.issue.title, 'Dependency Dashboard') && !contains(github.event.issue.title, 'Renovate') && !contains(github.event.issue.title, 'Dependabot')))
