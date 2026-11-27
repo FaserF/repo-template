@@ -332,7 +332,11 @@ jobs:
               try:
                   llm_req = urllib.request.Request(
                       f"{omniroute_url}/chat/completions",
-                      headers={"Authorization": f"Bearer {omniroute_key}", "Content-Type": "application/json"},
+                      headers={
+                          "Authorization": f"Bearer {omniroute_key}",
+                          "Content-Type": "application/json",
+                          "User-Agent": "FaserF-Hermes-Reviewer/1.0",
+                      },
                       data=json.dumps({
                           "model": routed_model,
                           "messages": [{"role": "user", "content": review_prompt}],
